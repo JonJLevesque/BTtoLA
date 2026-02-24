@@ -30,3 +30,9 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Local AI context files (contain proprietary migration domain knowledge)
+# These files are for local dev sessions only — IP lives on the proxy server
+CLAUDE.local.md
+GEMINI.local.md
+COPILOT.local.md

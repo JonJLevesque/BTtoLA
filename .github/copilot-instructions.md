@@ -1,6 +1,6 @@
 # BizTalk to Logic Apps — Project Context
 
-> Project conventions and development guide for Claude Code.
+> Project conventions and development guide for GitHub Copilot.
 > Migration domain knowledge (shape mappings, adapter tables, WDL rules) is proprietary
 > and lives on the proxy server — not in this file.
 
