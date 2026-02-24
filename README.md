@@ -1,313 +1,391 @@
-# BizTalk to Logic Apps Migration Tool
+# BizTalk Migrate
 
-**Migrate Microsoft BizTalk Server applications to Azure Logic Apps — automatically.**
+**Automatically migrate Microsoft BizTalk Server applications to Azure Logic Apps.**
 
-Point it at a folder of BizTalk files. Get back a deployable Azure project, a gap analysis, and a migration report. No deep Azure expertise required.
+Point it at a folder of BizTalk files. Get back a ready-to-deploy Azure project, a gap analysis, and a migration report — in minutes.
 
-> **Why this exists**: Microsoft BizTalk Server reaches end of extended support in **October 2028**. Every organization running BizTalk must migrate. This tool makes that process fast, systematic, and correct.
+> **Why this exists**: Microsoft BizTalk Server reaches end of extended support in **October 2028**. Every organization running BizTalk must migrate before then. This tool makes that fast, systematic, and correct.
+
+🌐 **[biztalkmigrate.com](https://biztalkmigrate.com)** — get a free 3-day trial key, no credit card required
 
 ---
 
-## What You Get
+## What You Need Before Starting
 
-Run one command. Get back:
+Three things:
+
+1. **Node.js 20 or later** — download free from [nodejs.org](https://nodejs.org). Click the big "LTS" button and install it like any other program.
+
+2. **Your BizTalk application's export files** — see the section below on how to get these
+
+3. **A license key** — get one free at [biztalkmigrate.com](https://biztalkmigrate.com)
+
+---
+
+## Step 1 — Export Your BizTalk Files
+
+You need to pull your application's files out of BizTalk first. Here's how:
+
+**In BizTalk Administration Console:**
+
+1. Expand **Applications** in the left panel
+2. Right-click the application you want to migrate
+3. Click **Export → MSI file** — save it somewhere and extract it. This gives you `.odx`, `.btm`, and `.btp` files.
+4. Right-click the same application again
+5. Click **Export → Bindings** → save the file as **`BindingInfo.xml`**
+
+Now put all of those files into a single folder on your computer. Example:
 
 ```
-output/
-├── ProcessOrder/
-│   └── workflow.json          ← Your migrated Logic Apps workflow
-├── connections.json           ← Azure service connections
-├── host.json                  ← Runtime configuration
-├── local.settings.json        ← App settings template (fill in connection strings)
-├── infra/
-│   └── main.bicep             ← Azure deployment template
-└── migration-report.md        ← Gap analysis, effort estimates, what needs manual work
+C:\Users\YourName\Documents\my-biztalk-export\
+    OrderProcessing.odx
+    OrderMap.btm
+    ReceivePipeline.btp
+    BindingInfo.xml
 ```
 
-Everything in that folder can be deployed directly to Azure Logic Apps Standard.
+That folder is your **input folder**. You'll need its path in the next step.
 
 ---
 
-## Before You Start
+## Step 2 — Install the Tool
 
-You need three things:
-
-1. **Node.js 20 or later** — [nodejs.org](https://nodejs.org)
-2. **Your BizTalk application's export files** — see below
-3. **A license key** — [biztalkmigrate.com](https://biztalkmigrate.com) (free tier available)
-
-### How to export your BizTalk files
-
-In BizTalk Administration Console:
-
-1. Right-click your application → **Export → MSI file** — this gives you the `.odx`, `.btm`, and `.btp` files
-2. Right-click your application → **Export → Bindings** → save as `BindingInfo.xml`
-
-Put all those files in one folder. That folder is your input.
-
----
-
-## Install
+Open a terminal (Command Prompt, PowerShell, or Terminal on Mac) and run:
 
 ```bash
-git clone https://github.com/jonlevesque/BiztalktoLogicapps.git
-cd BiztalktoLogicapps
-npm install
-npm run build
+npm install -g biztalk-migrate
+```
+
+This installs the `biztalk-migrate` command globally on your computer. You only need to do this once.
+
+**Verify it installed correctly:**
+
+```bash
+biztalk-migrate --version
+```
+
+You should see a version number printed. If you get "command not found", close and reopen your terminal and try again.
+
+---
+
+## Step 3 — Set Your License Key
+
+You need to tell the tool your license key. The easiest way is to set it as an environment variable so you don't have to type it every time.
+
+**On Mac or Linux** — add this line to your `~/.zshrc` or `~/.bashrc` file, then restart your terminal:
+
+```bash
+export BTLA_LICENSE_KEY="BTLA-XXXX-XXXX-XXXX"
+```
+
+**On Windows (PowerShell):**
+
+```powershell
+$env:BTLA_LICENSE_KEY="BTLA-XXXX-XXXX-XXXX"
+```
+
+> Replace `BTLA-XXXX-XXXX-XXXX` with your actual key from the email we sent you.
+
+**Or** you can include the key directly in the run command (see next step).
+
+---
+
+## Step 4 — Run Your Migration
+
+This is the command that does the actual migration. It has three parts you need to fill in yourself:
+
+```
+biztalk-migrate run --dir YOUR_FOLDER --app "YOUR_APP_NAME" --output YOUR_OUTPUT_FOLDER
+```
+
+### What to Replace
+
+| What you see | What it means | Example |
+|---|---|---|
+| `YOUR_FOLDER` | The folder containing your BizTalk export files from Step 1 | `./my-biztalk-export` or `C:\Users\Jon\Documents\my-biztalk-export` |
+| `"YOUR_APP_NAME"` | A name for this application — used in the report and output file names. Can be anything. | `"OrderProcessing"` or `"InvoiceSystem"` |
+| `YOUR_OUTPUT_FOLDER` | Where you want the generated Logic Apps files to be saved. The tool creates this folder if it doesn't exist. | `./output` or `C:\Users\Jon\Documents\logic-apps-output` |
+
+---
+
+### Real Examples
+
+**Example 1 — files on your Desktop (Mac):**
+
+Your BizTalk export is in a folder called `biztalk-files` on your Desktop.
+
+```bash
+biztalk-migrate run \
+  --dir ~/Desktop/biztalk-files \
+  --app "OrderSystem" \
+  --output ~/Desktop/logic-apps-output
+```
+
+**Example 2 — files in Documents (Windows):**
+
+Your BizTalk export is in `C:\Users\Jon\Documents\BizTalk-Export`.
+
+```powershell
+biztalk-migrate run --dir "C:\Users\Jon\Documents\BizTalk-Export" --app "OrderSystem" --output "C:\Users\Jon\Documents\LogicApps-Output"
+```
+
+**Example 3 — current folder (the folder you have open in your terminal):**
+
+```bash
+biztalk-migrate run --dir ./artifacts --app "OrderSystem" --output ./output
+```
+
+> **Tip:** If your folder path has spaces in it (like `My Documents`), wrap the whole path in quotes: `--dir "C:\Users\Jon\My Documents\BizTalk Export"`
+
+---
+
+### Including Your License Key in the Command
+
+If you didn't set it as an environment variable, add `BTLA_LICENSE_KEY=your-key` to the front of the command:
+
+**Mac / Linux:**
+
+```bash
+BTLA_LICENSE_KEY="BTLA-XXXX-XXXX-XXXX" biztalk-migrate run \
+  --dir ~/Desktop/biztalk-files \
+  --app "OrderSystem" \
+  --output ~/Desktop/logic-apps-output
+```
+
+**Windows (PowerShell):**
+
+```powershell
+$env:BTLA_LICENSE_KEY="BTLA-XXXX-XXXX-XXXX"
+biztalk-migrate run --dir "C:\Users\Jon\Documents\BizTalk-Export" --app "OrderSystem" --output "C:\Users\Jon\Documents\Output"
 ```
 
 ---
 
-## Run Your First Migration
+### What You'll See While It Runs
 
-```bash
-BTLA_LICENSE_KEY=your-key-here node dist/cli/index.js run \
-  --dir ./path/to/biztalk-files \
-  --app "YourApplicationName" \
-  --output ./output
-```
-
-That's it. The tool:
-1. Parses every `.odx`, `.btm`, `.btp`, and `BindingInfo.xml` it finds
-2. Scores complexity, detects integration patterns, identifies gaps
-3. Sends the migration intent to the AI for enrichment (via the proxy — your BizTalk files never leave your machine)
-4. Generates the Logic Apps project
-5. Validates the output and scores quality (target: grade B or higher)
-6. Writes `migration-report.md`
-
-Console output looks like:
+The tool prints progress as it works:
 
 ```
+[PARSE   ] Scanning artifacts in ./biztalk-files...
 [PARSE   ] Found 4 artifacts — 2 orchestrations, 1 map, 1 binding
 [REASON  ] Enriching migration intent...
 [SCAFFOLD] Generating Logic Apps package...
 [VALIDATE] Quality: 83/100  Grade B
-✔ Migration complete — output written to ./output
+✔ Migration complete — output written to ./logic-apps-output
 ```
 
-### Try it without a license key (dev mode)
+The whole thing usually takes 30–60 seconds.
+
+---
+
+## Step 5 — Look at What Was Generated
+
+Open your output folder. You'll find:
+
+```
+logic-apps-output/
+├── OrderSystem/
+│   └── workflow.json          ← Your BizTalk orchestration, converted to Logic Apps
+├── connections.json           ← The Azure service connections your workflow needs
+├── host.json                  ← Logic Apps runtime settings
+├── local.settings.json        ← Template for your connection strings (fill these in)
+├── infra/
+│   └── main.bicep             ← Azure deployment template — deploys everything to Azure
+└── migration-report.md        ← Open this first — explains what migrated and what didn't
+```
+
+**Start by opening `migration-report.md`.** It's a plain text file that tells you:
+
+- ✅ What migrated automatically (no manual work needed)
+- ⚠️ What migrated with caveats (needs review before deploying)
+- ❌ What couldn't be migrated automatically (needs manual work — the report explains what to do)
+
+---
+
+## Understanding the Quality Grade
+
+The tool scores the generated workflow 0–100 and gives it a letter grade:
+
+| Grade | Score | What it means |
+|---|---|---|
+| **A** | ≥ 90 | Deployment-ready. Very little to review. |
+| **B** | 75–89 | Ready to deploy. Minor notes in the report. |
+| **C** | 60–74 | Deployable but review the report before going to production. |
+| **D** | 40–59 | Issues to address. Read the report carefully. |
+| **F** | < 40 | Structural problems. Check the error section in the report. |
+
+**Aim for Grade B or higher before deploying to production.**
+
+If you get a C or lower, the migration report will tell you exactly what to fix.
+
+---
+
+## Try It Without a License Key First
+
+Want to see the tool work before setting up a key? Use dev mode with the built-in test files:
 
 ```bash
-BTLA_DEV_MODE=true node dist/cli/index.js run \
-  --dir tests/fixtures/02-simple-file-receive \
+BTLA_DEV_MODE=true biztalk-migrate run \
+  --dir node_modules/biztalk-migrate/tests/fixtures/02-simple-file-receive \
   --app "SimpleFileReceive" \
   --output ./test-output
 ```
 
-Dev mode skips the AI enrichment step and runs fully offline. Good for testing the install.
+Dev mode skips the AI step and runs completely offline. The output won't be production-quality, but you'll see the full pipeline run and get a real output folder to look at.
+
+---
+
+## Common Problems and Fixes
+
+**"command not found: biztalk-migrate"**
+
+The npm global install didn't add itself to your PATH. Try:
+
+```bash
+# Mac / Linux
+echo 'export PATH="$PATH:$(npm bin -g)"' >> ~/.zshrc && source ~/.zshrc
+
+# Windows — close and reopen PowerShell as Administrator, then:
+npm install -g biztalk-migrate
+```
+
+---
+
+**"License validation failed"**
+
+- Check that `BTLA_LICENSE_KEY` is set to your actual key (not the placeholder `BTLA-XXXX-XXXX-XXXX`)
+- The Free tier only runs analysis (Stages 1 and 2). Generating `workflow.json` requires a Standard key. Get one at [biztalkmigrate.com](https://biztalkmigrate.com).
+
+---
+
+**"No artifacts found"**
+
+The tool didn't find any `.odx`, `.btm`, `.btp`, or `BindingInfo.xml` files in the folder you gave it. Double-check the `--dir` path is pointing to the right place.
+
+Quick check — list the files in your folder:
+
+```bash
+# Mac / Linux
+ls ~/Desktop/biztalk-files
+
+# Windows
+dir "C:\Users\Jon\Documents\BizTalk-Export"
+```
+
+You should see your `.odx`, `.btm`, etc. files listed.
+
+---
+
+**"TODO_CLAUDE appears in workflow.json"**
+
+The AI couldn't automatically translate a complex expression (usually a C#-style condition). You'll need to fill it in manually. The migration report will tell you exactly where it is and what kind of expression it needs.
+
+---
+
+**"msxsl:script not supported"**
+
+One of your BizTalk maps uses C# scripting inside the XSLT — Azure Logic Apps doesn't support that. You'll need to rewrite those parts as Azure Functions. The migration report flags exactly which maps are affected.
+
+---
+
+**Loop conditions look backwards**
+
+This is correct and expected. BizTalk runs a loop *while* a condition is true. Logic Apps runs a loop *until* a condition is true. The tool automatically inverts the condition — review loop logic before deploying.
+
+---
+
+## What BizTalk Features Migrate Automatically
+
+**No manual work needed:**
+FILE, FTP, SFTP, HTTP, SOAP, Service Bus, SQL, SMTP, Event Hubs, Azure Blob, IBM MQ, SAP, EDI/X12/EDIFACT/AS2 adapters, Receive shapes, Send shapes, Transform/XSLT maps, Decide → If/Switch, Delay, Terminate, Call Orchestration, Sequential Convoy, Parallel Actions
+
+**Needs review (migrates but check the report):**
+While loops (condition is auto-inverted), Scope/error handling, Parallel actions, Listen shapes, Suspend with retry
+
+**Requires redesign (tool flags and explains in the report):**
+WCF-NetNamedPipe, MSDTC atomic transactions, WCF-NetTcp, MessageBox publish-subscribe, Compensation patterns
+
+The migration report categorizes every component in your application. You'll know before deploying.
 
 ---
 
 ## License Tiers
 
-| What you can do | Free | Standard | Premium |
+| | Free | Standard | Premium |
 |---|:---:|:---:|:---:|
-| Parse BizTalk artifacts (Stage 1) | ✅ | ✅ | ✅ |
-| Gap analysis + architecture recommendation (Stage 2) | ✅ | ✅ | ✅ |
-| Generate Logic Apps workflows, connections, infra (Stage 3) | — | ✅ | ✅ |
-| Build a deployable Logic Apps package | — | ✅ | ✅ |
-| Greenfield NLP — design a new workflow from a description | — | — | ✅ |
+| Analyze BizTalk artifacts | ✅ | ✅ | ✅ |
+| Gap analysis + architecture recommendation | ✅ | ✅ | ✅ |
+| Generate Logic Apps workflow.json, connections, infra | — | ✅ | ✅ |
+| Full deployable Logic Apps package | — | ✅ | ✅ |
+| Greenfield NLP (design new workflows from plain English) | — | — | ✅ |
 | 50+ pre-built workflow templates | — | — | ✅ |
 
-Get your key at [biztalkmigrate.com](https://biztalkmigrate.com) or email [Me@Jonlevesque.com](mailto:Me@Jonlevesque.com).
-
-Set it as an environment variable so you don't have to type it every time:
-
-```bash
-# macOS / Linux — add to ~/.zshrc or ~/.bashrc
-export BTLA_LICENSE_KEY="your-key-here"
-
-# Windows (PowerShell)
-$env:BTLA_LICENSE_KEY="your-key-here"
-```
+Get your key at [biztalkmigrate.com](https://biztalkmigrate.com).
 
 ---
 
-## Three Ways to Use It
+## Other Ways to Use It
 
-### 1. CLI — quickest
+### VS Code Extension
 
-```bash
-node dist/cli/index.js run --dir ./artifacts --app "MyApp" --output ./output
-```
+Open your BizTalk export folder in VS Code. The extension activates automatically when you open any `.odx`, `.btm`, or `.btp` file.
 
-Full CLI reference: run `node dist/cli/index.js --help`
+Press `Cmd+Shift+P` (Mac) or `Ctrl+Shift+P` (Windows) to open the Command Palette, then type:
 
-### 2. VS Code Extension — recommended for day-to-day work
+- **BizTalk Migrate: Run Migration** — same pipeline as the CLI, with a folder picker and live progress
+- **BizTalk Migrate: Analyze Directory** — analysis only (free)
+- **BizTalk Migrate: Open Migration Dashboard** — visual gap analysis
 
-Open this repo folder in VS Code. The extension activates automatically when you open any `.odx`, `.btm`, `.btp`, or `BindingInfo.xml` file.
+Set your key in VS Code settings under `biztalkMigrate.licenseKey`.
 
-Use the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`):
+### GitHub Actions
 
-- **BizTalk Migrate: Run Migration** — the one-command pipeline with a folder picker and real-time progress
-- **BizTalk Migrate: Analyze Directory** — Stage 1 + 2 only (free tier)
-- **BizTalk Migrate: Open Migration Dashboard** — visual gap analysis and component mapping
-- **BizTalk Migrate: Browse Template Library** — 50+ pre-built patterns (Premium)
+The repo includes `.github/workflows/biztalk-migrate.yml`. Add `BTLA_LICENSE_KEY` to your repo's GitHub secrets, trigger it from the Actions tab, and it uploads the Logic Apps package as a downloadable artifact.
 
-Set your license key in VS Code settings: `biztalkMigrate.licenseKey`
+### Claude Desktop (interactive guided migration)
 
-### 3. Claude Desktop (interactive guided migration)
+Connect the MCP server to Claude Desktop for a step-by-step guided migration where Claude walks through each artifact, shows the migration plan, and explains every decision.
 
-Connect the MCP server to Claude Desktop for an interactive, step-by-step guided migration. Claude walks through each artifact with you, shows you the migration plan before generating code, and explains every decision.
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
   "mcpServers": {
     "biztalk-migration": {
-      "command": "node",
-      "args": ["/absolute/path/to/BiztalktoLogicapps/dist/mcp-server/server.js"],
+      "command": "npx",
+      "args": ["-y", "biztalk-migrate", "mcp"],
       "env": {
-        "BTLA_LICENSE_KEY": "your-key-here"
+        "BTLA_LICENSE_KEY": "BTLA-XXXX-XXXX-XXXX"
       }
     }
   }
 }
 ```
 
-Restart Claude Desktop. Then start a migration by asking: *"Migrate my BizTalk application"* and Claude guides you through each step.
+Restart Claude Desktop. Then say: *"Migrate my BizTalk application"* and Claude will guide you through it.
 
 ---
 
-## Understanding the Output
+## For Consultants
 
-### migration-report.md
-
-This is the file to share with your customer first. It contains:
-
-- **Complexity score** — Simple / Moderate / Complex / Highly Complex
-- **Gap analysis** — what BizTalk features have no direct Azure equivalent, how much manual work each gap requires, and what the mitigation is
-- **Architecture recommendation** — which Azure services you need (Logic Apps, Service Bus, Integration Account, API Management, etc.)
-- **Component mapping** — every orchestration shape, adapter, and map matched to its Logic Apps equivalent
-- **Effort estimate** — person-days broken down by component
-
-Review the report before deploying. The gaps section tells you exactly what needs human attention.
-
-### Quality grades
-
-The tool scores every generated workflow 0–100 before writing it to disk:
-
-| Grade | Score | Meaning |
-|---|---|---|
-| A | ≥90 | Deployment-ready |
-| B | 75–89 | Ready to deploy; minor improvements noted |
-| C | 60–74 | Deployable but review before production |
-| D | 40–59 | Issues to address |
-| F | <40 | Structural problems — check the error log |
-
-Target **grade B or higher** before handing off to a customer.
-
-### local.settings.json
-
-This file contains placeholder references for every connection string and secret the workflow needs. Before deploying:
-
-- **`KVS_` prefix** → store the real value in Azure Key Vault; set the App Setting to a Key Vault reference
-- **`Common_` prefix** → non-sensitive values (hostnames, ports) that you set directly
-
-```json
-{
-  "Values": {
-    "KVS_Storage_Blob_ConnectionString": "← store this in Key Vault",
-    "Common_API_Sftp_Host": "sftp.yourcompany.com"
-  }
-}
-```
-
----
-
-## Deploying to Azure
-
-### VS Code Logic Apps Extension (recommended for development)
-
-1. Install the **Azure Logic Apps (Standard)** extension in VS Code
-2. Open the generated output folder
-3. Right-click the Logic App resource → **Deploy to Logic App**
-4. Fill in App Settings from `local.settings.json`
-
-### Azure CLI (recommended for production)
+**Before the first client meeting** (runs on the Free tier, takes seconds):
 
 ```bash
-az deployment group create \
-  --resource-group rg-integration-prod \
-  --template-file output/infra/main.bicep \
-  --parameters @output/infra/parameters.json
-
-az logicapp deployment source config-zip \
-  --resource-group rg-integration-prod \
-  --name LAStd-YourApp-Prod \
-  --src ./logic-apps-package.zip
+biztalk-migrate run \
+  --dir ./client-export \
+  --app "ClientOrderSystem" \
+  --output ./pre-engagement-report
 ```
 
-### GitHub Actions
+Open `migration-report.md`. You'll have the complexity score, gap count, and estimated effort before you've billed a single hour — enough to write a SOW.
 
-The repo includes `.github/workflows/biztalk-migrate.yml`. Add `BTLA_LICENSE_KEY` to your repo's GitHub secrets, then trigger the workflow from the Actions tab. It produces a downloadable Logic Apps package and renders the migration report directly in the Actions job summary.
-
----
-
-## Common Issues
-
-**"License validation failed"**
-Check that `BTLA_LICENSE_KEY` is set. Free tier only covers Stage 1 + Stage 2 — Stage 3 (generate workflow.json) requires Standard or higher.
-
-**Workflow deploys but triggers don't fire**
-The connection name in `workflow.json` must exactly match the key in `connections.json` (case-sensitive). Check the `connectionName` field inside `serviceProviderConfiguration`.
-
-**"TODO_CLAUDE" appears in workflow.json**
-The AI couldn't automatically translate a value (usually a complex condition expression). Ask Claude to fill it in, or check the expression against the XLANG/s translation guide in `README-internal.md`.
-
-**XSLT fails with "msxsl:script not supported"**
-BizTalk scripting functoids use `<msxsl:script>` C# blocks that aren't supported in Azure Logic Apps XSLT. The migration report flags these as requiring manual rewrite or an Azure Function.
-
-**Loop conditions seem inverted**
-This is correct. BizTalk `LoopShape` runs *while* a condition is true; Logic Apps `Until` action runs *until* a condition is true. The generated code inverts the expression automatically — review loop conditions before deploying.
-
----
-
-## What BizTalk Features Migrate Automatically
-
-**Direct mappings (no manual work):**
-- FILE, FTP, SFTP, HTTP, SOAP, Service Bus, SQL, SMTP, Event Hubs, Azure Blob, IBM MQ, SAP, EDI/X12/EDIFACT/AS2 adapters
-- Receive → trigger, Send → action, Transform → XSLT, Decide → If/Switch, Delay, Terminate, Call Orchestration, Sequential Convoy → Service Bus sessions
-
-**Partial mappings (review required):**
-- While loops (condition inverted), Scope/error handling, parallel actions, Listen shapes, Suspend shapes
-
-**Gaps requiring redesign:**
-- WCF-NetNamedPipe (no Azure equivalent — architectural redesign required)
-- MSDTC atomic transactions (replaced by Saga/compensation pattern)
-- WCF-NetTcp (requires Azure Relay or Azure Functions wrapper)
-
-The migration report identifies which category every component in your application falls into.
-
----
-
-## For Consultants: Running Engagements
-
-**Before the first meeting**, run Stage 1 + Stage 2 only (free):
-
-```bash
-node dist/cli/index.js analyze --app "AppName" --dir ./artifacts
-```
-
-This produces the complexity score and gap analysis in seconds — enough to size the engagement and identify blockers before writing a SOW.
-
-**At the start of the engagement**, collect from the customer:
-- Sample input messages (3–5 representative XML files)
-- Golden master output files (from BizTalk message tracking)
-- XSD schemas from the VS project
-- Compiled XSLT maps
-
-These become test fixtures that prove the migration is functionally correct.
-
-**During the migration**, work orchestration by orchestration. Review the migration spec for each one before building — the spec is cheap to correct, the generated JSON is not.
-
-**Quality target**: Grade B (≥75/100) before customer handoff.
+**Quality target for customer handoff**: Grade B or higher (≥75/100).
 
 ---
 
 ## Support
 
-Questions, issues, or consultant seat pricing: **[Me@Jonlevesque.com](mailto:Me@Jonlevesque.com)**
+Questions, bugs, or consultant seat pricing:
 
-Technical reference (architecture, MCP tools, WDL rules, adapter mappings): [README-internal.md](README-internal.md)
+📧 **[Me@Jonlevesque.com](mailto:Me@Jonlevesque.com)**
+🌐 **[biztalkmigrate.com](https://biztalkmigrate.com)**
