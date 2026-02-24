@@ -22,6 +22,8 @@ import * as vscode from 'vscode';
 import { spawn, ChildProcess } from 'child_process';
 import { join, extname } from 'path';
 import { existsSync } from 'fs';
+import { runMigration } from '../runner/index.js';
+import { writeOutput }  from '../runner/index.js';
 
 // ─── Extension State ──────────────────────────────────────────────────────────
 
@@ -48,6 +50,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('biztalk-migrate.startMcpServer',    () => startMcpServer(context)),
     vscode.commands.registerCommand('biztalk-migrate.createFromNlp',     () => createFromNlp(context)),
     vscode.commands.registerCommand('biztalk-migrate.listTemplates',     () => listTemplates(context)),
+    vscode.commands.registerCommand('biztalk-migrate.runMigration',      () => runMigrationCommand(context)),
     statusBarItem,
     outputChannel,
   );
@@ -226,6 +229,117 @@ async function createFromNlp(context: vscode.ExtensionContext): Promise<void> {
 
 function listTemplates(context: vscode.ExtensionContext): void {
   void vscode.commands.executeCommand('biztalk-migrate.openDashboard');
+}
+
+// ─── Run Migration (One-Command Pipeline) ─────────────────────────────────────
+
+async function runMigrationCommand(context: vscode.ExtensionContext): Promise<void> {
+  // Step 1: Select artifact folder
+  const artifactFolder = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles:   false,
+    canSelectMany:    false,
+    openLabel:        'Select BizTalk Artifacts Folder',
+  });
+  if (!artifactFolder || artifactFolder.length === 0) return;
+  const artifactDir = artifactFolder[0].fsPath;
+
+  // Step 2: Application name
+  const appName = await vscode.window.showInputBox({
+    prompt:         'Enter the BizTalk application name',
+    placeHolder:    'MyBizTalkApp',
+    value:          artifactDir.split('/').pop() ?? 'BizTalkApp',
+    ignoreFocusOut: true,
+  });
+  if (!appName) return;
+
+  // Step 3: Output directory
+  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const defaultOutput = wsRoot ? join(wsRoot, 'logic-apps-output') : join(artifactDir, '..', 'logic-apps-output');
+  const outputDirInput = await vscode.window.showInputBox({
+    prompt:         'Output directory for generated Logic Apps project',
+    placeHolder:    defaultOutput,
+    value:          defaultOutput,
+    ignoreFocusOut: true,
+  });
+  if (!outputDirInput) return;
+  const outputDir = outputDirInput;
+
+  // Step 4: Run the migration with progress notification
+  outputChannel.appendLine(`[RunMigration] Starting: ${appName} — artifacts: ${artifactDir}`);
+  outputChannel.show();
+
+  const licenseKey = vscode.workspace.getConfiguration('biztalkMigrate').get<string>('licenseKey');
+  if (licenseKey) {
+    process.env['BIZTALK_LICENSE_KEY'] = licenseKey;
+  }
+
+  await vscode.window.withProgress(
+    {
+      location:    vscode.ProgressLocation.Notification,
+      title:       `BizTalk Migration: ${appName}`,
+      cancellable: false,
+    },
+    async (progress) => {
+      try {
+        progress.report({ message: 'Starting pipeline...' });
+
+        const result = await runMigration({
+          artifactDir,
+          appName,
+          outputDir,
+          onProgress: ({ step, message }) => {
+            const label = step.charAt(0).toUpperCase() + step.slice(1);
+            progress.report({ message: `[${label}] ${message}` });
+            outputChannel.appendLine(`[${label}] ${message}`);
+          },
+        });
+
+        if (!result.success) {
+          void vscode.window.showErrorMessage(
+            `Migration failed: ${result.errors[0] ?? 'Unknown error'}`,
+            'Show Output'
+          ).then(sel => { if (sel === 'Show Output') outputChannel.show(); });
+          return;
+        }
+
+        // Write output files
+        progress.report({ message: 'Writing output files...' });
+        writeOutput({ outputDir, buildResult: result.buildResult!, migrationReport: result.migrationReport });
+
+        // Open the report
+        const reportUri = vscode.Uri.file(join(outputDir, 'migration-report.md'));
+        await vscode.commands.executeCommand('markdown.showPreview', reportUri);
+
+        const gradeMsg = result.qualityReport
+          ? ` Quality: ${result.qualityReport.totalScore}/100 Grade ${result.qualityReport.grade}.`
+          : '';
+
+        void vscode.window.showInformationMessage(
+          `Migration complete!${gradeMsg} Output: ${outputDir}`,
+          'Open Output Folder'
+        ).then(sel => {
+          if (sel === 'Open Output Folder') {
+            void vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(outputDir));
+          }
+        });
+
+        outputChannel.appendLine(`[RunMigration] Complete. Output: ${outputDir}`);
+        if (result.warnings.length > 0) {
+          outputChannel.appendLine(`[RunMigration] Warnings: ${result.warnings.length}`);
+          for (const w of result.warnings.slice(0, 10)) {
+            outputChannel.appendLine(`  ⚠ ${w}`);
+          }
+        }
+
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        outputChannel.appendLine(`[RunMigration] Error: ${msg}`);
+        void vscode.window.showErrorMessage(`Migration error: ${msg}`, 'Show Output')
+          .then(sel => { if (sel === 'Show Output') outputChannel.show(); });
+      }
+    }
+  );
 }
 
 // ─── Dashboard WebView ────────────────────────────────────────────────────────

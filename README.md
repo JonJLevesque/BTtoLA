@@ -13,8 +13,11 @@ A commercial-grade, **consultant-focused** tool for migrating Microsoft BizTalk 
 - [Licensing Tiers](#licensing-tiers)
 - [Architecture Overview](#architecture-overview)
 - [Quick Start](#quick-start)
+- [One-Command Pipeline](#one-command-pipeline)
 - [CLI Reference](#cli-reference)
+- [GitHub Actions](#github-actions)
 - [MCP Server (Claude Integration)](#mcp-server-claude-integration)
+  - [Claude-Powered Migration Pipeline](#claude-powered-migration-pipeline)
 - [VS Code Extension](#vs-code-extension)
 - [Configuration](#configuration)
 - [BizTalk Coverage](#biztalk-coverage)
@@ -29,6 +32,17 @@ A commercial-grade, **consultant-focused** tool for migrating Microsoft BizTalk 
 - [Development](#development)
 - [Project Structure](#project-structure)
 - [Roadmap](#roadmap)
+- [Usage Guide](#usage-guide)
+  - [Before You Start](#before-you-start)
+  - [Connect to Claude](#connect-to-claude)
+  - [Run a Migration](#run-a-migration)
+  - [Deploy the Output](#deploy-the-output)
+  - [Greenfield NLP Mode](#greenfield-nlp-mode-premium)
+  - [Validation Reference](#validation-reference)
+  - [Quality Scoring](#quality-scoring-1)
+  - [Common Issues](#common-issues)
+  - [Tips for Complex Applications](#tips-for-complex-applications)
+- [Support](#support)
 
 ---
 
@@ -171,27 +185,125 @@ node dist/cli/index.js design "Receive orders from a Service Bus queue, validate
 
 ---
 
+## One-Command Pipeline
+
+The `run` command (and the VS Code "Run Migration" command) automates the full 5-step pipeline in a single call. Consultants point it at a folder of BizTalk artifacts and get back a complete Logic Apps project plus a migration report — with no prompts, no chains, no MCP tool knowledge required.
+
+```
+┌──────────────────────────────────────────────────────┐
+│  biztalk-migrate run  /  VS Code: "Run Migration"    │
+│  GitHub Action: workflow_dispatch                    │
+└─────────────────────┬────────────────────────────────┘
+                      │
+         ┌────────────▼────────────┐
+         │      runMigration()     │  src/runner/migration-runner.ts
+         └────────────┬────────────┘
+                      │
+   ┌──────────────────┼──────────────────┐
+   ▼                  ▼                  ▼
+PARSE (local)    REASON (Claude)   SCAFFOLD (local)
+<1s              enriches intent   builds package
+   │                  │                  │
+   └──────────────────┼──────────────────┘
+                      ▼
+             VALIDATE + REVIEW
+             (local + Claude if grade < B)
+                      ▼
+             REPORT → migration-report.md
+```
+
+**Only REASON and REVIEW use Claude.** Everything else runs locally.
+
+### CLI: `run`
+
+```bash
+# Dev mode — no API key needed, enrichment skipped
+BTLA_DEV_MODE=true node dist/cli/index.js run \
+  --dir tests/fixtures/02-simple-file-receive \
+  --app "SimpleFileReceive" \
+  --output ./output
+
+# Direct mode — Anthropic API (TODO_CLAUDE markers resolved, grade-targeted review)
+ANTHROPIC_API_KEY=sk-... node dist/cli/index.js run \
+  --dir ./biztalk-artifacts \
+  --app "CustomerOnboarding" \
+  --output ./logic-apps-output
+
+# Proxy mode — license key authenticates against the hosted proxy
+BIZTALK_LICENSE_KEY=your-key node dist/cli/index.js run \
+  --dir ./biztalk-artifacts \
+  --app "CustomerOnboarding" \
+  --output ./logic-apps-output
+```
+
+Console output during a run:
+```
+[PARSE   ] Scanning artifacts in ./biztalk-artifacts...
+[PARSE   ] Found 5 artifacts — 2 orchestrations, 1 map, 0 pipelines, 2 bindings
+[PARSE   ] Parsing orchestration: ProcessOrder.odx
+[REASON  ] Enriching with AI (direct mode)...
+[SCAFFOLD] Generating Logic Apps package...
+[VALIDATE] Validating generated workflows...
+[VALIDATE] Quality: 85/100 Grade B
+✔ Migration complete
+
+── Migration Summary ──────────────────────────────────
+  Application:  CustomerOnboarding
+  Output:       ./logic-apps-output
+  Workflows:    2
+  Quality:      85/100 Grade B
+  migration-report.md written to ./logic-apps-output
+```
+
+### VS Code: "BizTalk: Run Migration"
+
+Command palette (`Cmd+Shift+P`) → **BizTalk Migrate: Run Migration (One-Command Pipeline)**
+
+1. Folder picker — select the BizTalk artifacts directory
+2. Enter the application name
+3. Enter (or confirm) the output directory
+4. Progress notification shows each step in real time
+5. On completion: migration-report.md opens in markdown preview
+
+### Claude Client Modes
+
+| Environment | Mode | Behaviour |
+|---|---|---|
+| `BTLA_DEV_MODE=true` | dev | No API calls. Partial intent used as-is. Fast, free, offline. |
+| `ANTHROPIC_API_KEY=sk-...` | direct | Calls Anthropic API directly using `claude-sonnet-4-6`. Good for self-hosting. |
+| `BIZTALK_LICENSE_KEY=...` | proxy | Calls the hosted proxy at `https://api.biztalk-migrate.com/v1`. System prompt on server side. |
+
+All modes produce the same output structure. Claude failures are non-fatal — the runner falls back to the partial intent rather than stopping.
+
+---
+
 ## CLI Reference
 
 ```
 biztalk-migrate <command> [options]
 
 Commands:
+  run         ★ Full pipeline in one command: parse → reason → build → validate → report
   analyze     Parse BizTalk artifacts and produce a complexity + pattern report
-  document    Generate gap analysis and architecture recommendation (Stage 2)
-  migrate     Full pipeline: analyze → document → build Logic Apps output (Stage 3)
-  design      Greenfield workflow design from a natural language description
-  validate    Validate a generated workflow.json against the WDL schema
+  build       Build a Logic Apps Standard deployment package from a migration spec
+  convert     Convert a single BizTalk .btm map to Logic Apps format (LML/XSLT)
+  templates   List available workflow templates (Premium)
 
-Options:
-  --app <name>      Application name (used in output file names)
-  --dir <path>      Directory containing BizTalk artifacts (.odx, .btm, .btp, etc.)
-  --input <file>    Path to a previously saved migration-result.json
-  --output <dir>    Output directory for generated Logic Apps project
-  --license <key>   License key (overrides BIZTALK_MIGRATE_LICENSE env var)
-  --kind            Workflow kind: Stateful (default) | Stateless
-  --wrap-scope      Wrap workflow in a top-level error-handling Scope
-  --format          Output format: json | markdown (default: both)
+run options:
+  --dir <path>          Directory containing BizTalk artifacts (.odx, .btm, .btp, etc.)  [required]
+  --app <name>          BizTalk application name                                           [required]
+  --output <dir>        Output directory for generated Logic Apps project  [default: ./logic-apps-output]
+  --skip-enrichment     Skip Claude AI enrichment (offline/dev mode)
+
+analyze options:
+  --app <name>      Application name
+  --dir <path>      Directory containing BizTalk artifacts
+  --bindings <file> Path to BindingInfo.xml
+  --out <file>      Output file for migration spec JSON  [default: migration-spec.json]
+  --verbose         Show detailed output
+
+Global options:
+  --license <key>   License key (overrides BIZTALK_LICENSE_KEY env var)
 ```
 
 ### Example: Full Migration Run
@@ -224,6 +336,33 @@ output/CustomerOnboarding/
 │   └── CustomerOnboarding.Tests.json
 └── migration-report.md             ← Human-readable gap analysis + component mapping
 ```
+
+---
+
+## GitHub Actions
+
+The repo ships `.github/workflows/biztalk-migrate.yml` — a `workflow_dispatch` action that runs the full migration pipeline in CI and produces a downloadable Logic Apps package + job summary report.
+
+### Setup
+
+1. Add `BIZTALK_LICENSE_KEY` to your repo's **Settings → Secrets and variables → Actions**
+2. Optionally add `ANTHROPIC_API_KEY` for direct Claude enrichment
+3. Commit your BizTalk artifacts to the repo (e.g. under `artifacts/`)
+
+### Run
+
+Go to **Actions → BizTalk to Logic Apps Migration → Run workflow**, then fill in:
+
+| Input | Description | Example |
+|---|---|---|
+| `artifact_dir` | Path to artifacts in the repo | `artifacts/CustomerOnboarding` |
+| `app_name` | BizTalk application name | `CustomerOnboarding` |
+| `output_dir` | Output path (relative) | `logic-apps-output` |
+
+### Output
+
+- **Artifacts** — downloadable ZIP of the Logic Apps project (retained for 30 days)
+- **Job Summary** — `migration-report.md` rendered directly in the Actions UI
 
 ---
 
@@ -263,7 +402,7 @@ The framework ships as an MCP (Model Context Protocol) server, exposing all capa
 }
 ```
 
-### Available MCP Tools (26 total)
+### Available MCP Tools (34 total)
 
 #### Stage 1 — Understand
 
@@ -309,6 +448,77 @@ The framework ships as an MCP (Model Context Protocol) server, exposing all capa
 | `refine_workflow` | Iteratively refine a workflow using natural language feedback |
 | `create_workflow_from_description` | One-shot: description → complete deployable package |
 
+#### File & Intent Tools
+
+| Tool | Tier | Description |
+|---|---|---|
+| `read_artifact` | Free | Read a `.odx`/`.btm`/`.btp`/`.xml`/`.xsd` file from disk |
+| `list_artifacts` | Free | Scan a directory and return categorized artifact inventory |
+| `construct_intent` | Standard | Mechanical `BizTalkApplication` → partial `IntegrationIntent` bridge; marks ambiguous values `TODO_CLAUDE` |
+
+#### Validation & Quality Tools
+
+| Tool | Tier | Description |
+|---|---|---|
+| `validate_intent` | Free | Validate an `IntegrationIntent` for structural + semantic correctness |
+| `validate_workflow` | Free | Validate `workflow.json` against 29 WDL rules (errors / warnings / suggestions) |
+| `validate_connections` | Free | Validate `connections.json` — @AppSetting references, no orphan connections |
+| `validate_package` | Standard | Cross-file validation: workflow + connections + app settings coverage |
+| `score_migration_quality` | Standard | Rate output quality 0–100 (grade A–F) across 4 dimensions |
+
+### MCP Resources (on-demand reference knowledge)
+
+The server exposes 8 resources that Claude reads during complex migrations when it needs deep reference material. These are fetched on-demand and do not inflate context on every call.
+
+| URI | Content |
+|---|---|
+| `biztalk://reference/component-mapping` | Full BizTalk shape → Logic Apps action mapping table |
+| `biztalk://reference/connector-mapping` | All 30+ adapter → connector mappings with configuration notes |
+| `biztalk://reference/expression-mapping` | XLANG/s → WDL expression translation reference |
+| `biztalk://reference/pattern-mapping` | Enterprise integration pattern mapping with generated equivalents |
+| `biztalk://reference/gap-analysis` | All gap definitions with mitigations and effort estimates |
+| `biztalk://schema/decision-trees` | Machine-readable SKU/connector/transform decision data |
+| `biztalk://examples/simple-file-receive` | Training pair: ODX + binding → IntegrationIntent → workflow.json |
+| `biztalk://examples/content-based-routing` | Training pair: DecisionShape + XLANG/s → If action + WDL expression |
+
+### Claude-Powered Migration Pipeline
+
+When Claude has the MCP server connected, it follows a **5-step protocol** (defined in `CLAUDE.md` and embedded in the `guided_migration` prompt) that achieves 90%+ accurate Logic Apps output:
+
+```
+Step 1 — PARSE
+  read_artifact / list_artifacts → analyze_orchestration, analyze_map,
+  analyze_bindings, analyze_pipeline → BizTalkApplication
+  assess_complexity + detect_patterns
+
+Step 2 — REASON  ← Claude's brain (the critical step)
+  construct_intent → partial IntegrationIntent with TODO_CLAUDE markers
+  Claude translates XLANG/s expressions, selects error strategy,
+  fills connector configs → validate_intent to self-check
+
+Step 3 — SCAFFOLD
+  generate_gap_analysis + generate_architecture → presents migration plan
+  On approval: build_package → first-pass Logic Apps package
+
+Step 4 — REVIEW & ENRICH
+  Claude reviews workflow.json: fixes expressions, replaces TODO markers,
+  adds retry policies, error scopes, diagnostic metadata
+
+Step 5 — VALIDATE
+  validate_workflow + validate_connections → fix any errors
+  score_migration_quality → reports grade (target: B or higher, ≥75/100)
+```
+
+To start a guided migration in Claude, use the `/guided_migration` prompt:
+
+```
+[Use the MCP prompt] guided_migration
+  applicationName: "CustomerOnboarding"
+  artifactCount: "12"
+```
+
+Claude will guide you through each step, asking for artifacts one at a time and showing you the migration spec before generating any code.
+
 ---
 
 ## VS Code Extension
@@ -325,13 +535,14 @@ The VS Code extension activates automatically when you open any of these file ty
 
 | Command | Description |
 |---|---|
-| **BizTalk: Analyze Application** | Run full Stage 1 analysis on the current workspace |
-| **BizTalk: Generate Migration Plan** | Run Stage 2 and display the migration spec |
-| **BizTalk: Build Logic Apps Package** | Run Stage 3 and generate the output project |
-| **BizTalk: Show Analysis Results** | Open the analysis results panel |
-| **BizTalk: Browse Templates** | Open the template browser panel |
-| **BizTalk: Design Workflow (NLP)** | Open the NLP greenfield design dialog |
-| **BizTalk: Check License** | Validate and display the current license |
+| **BizTalk Migrate: Run Migration** | ★ One-command pipeline: folder picker → full migration → opens report |
+| **BizTalk Migrate: Analyze File** | Analyze the currently open .odx/.btm/.btp file |
+| **BizTalk Migrate: Analyze Directory** | Run Stage 1 analysis on a selected folder |
+| **BizTalk Migrate: Build Logic Apps Package** | Build a Logic Apps package from a migration-spec.json |
+| **BizTalk Migrate: Open Migration Dashboard** | Open the migration dashboard WebView panel |
+| **BizTalk Migrate: Start MCP Server** | Manually start the MCP server process |
+| **BizTalk Migrate: Create Workflow from Description (Premium)** | NLP greenfield design flow |
+| **BizTalk Migrate: Browse Template Library (Premium)** | Open the template browser panel |
 
 ### Analysis Results Panel
 
@@ -547,11 +758,13 @@ All generated files conform to the Logic Apps Standard project layout expected b
 
 `tests/fixtures/` contains verified **input → transform → expected-output trios** for regression testing and LLM grounding:
 
-| Fixture | BizTalk Pattern | Key Migration Challenge |
-|---|---|---|
-| `01-map-scripting-functoids/` | BTM map with C# scripting functoids | `msxsl:script` C# blocks (StringConcat, age calculation, cumulative sums) → not supported in Logic Apps XSLT |
-| `02-simple-file-receive/` | Linear orchestration: Receive → Transform → Send (FILE adapter) | ODX shapes → trigger + Compose + Transform; FILE adapter → Blob trigger |
-| `03-content-based-routing/` | DecisionShape with XLANG/s `\|\|` expression | Decide → If action; XLANG/s `\|\|` / `&&` → WDL `or` / `and` |
+| Fixture | BizTalk Pattern | Key Migration Challenge | Golden Master |
+|---|---|---|---|
+| `01-map-scripting-functoids/` | BTM map with C# scripting functoids | `msxsl:script` C# blocks → not supported in Logic Apps XSLT | — |
+| `02-simple-file-receive/` | Linear: Receive → Transform → Send (FILE) | FILE adapter → Blob trigger; shapes → Compose + Transform | ✅ |
+| `03-content-based-routing/` | DecisionShape with XLANG/s `||` expression | Decide → If; `||` / `&&` → WDL `or` / `and` | ✅ |
+
+Fixtures with golden masters include a `training-pair.json` (full BizTalk→Intent→LogicApps example) and `expected-logic-apps/` (hand-crafted reference output used by the golden-master test suite).
 
 ### Fixture-Driven Development
 
@@ -576,7 +789,7 @@ npm run build:watch     # compile in watch mode
 npm run clean           # remove dist/
 
 # Test
-npm test                # run all 157 tests (unit + integration)
+npm test                # run all 202 tests (unit + integration + golden-master + regression)
 npm run test:watch      # watch mode
 npm run test:coverage   # generate coverage report
 
@@ -627,7 +840,8 @@ src/
 │   ├── map-analyzer.ts            ← BTM / XSLT parser
 │   ├── pipeline-analyzer.ts       ← BTP parser
 │   ├── pattern-detector.ts        ← Enterprise integration pattern detection
-│   └── complexity-scorer.ts       ← Complexity score + classification
+│   ├── complexity-scorer.ts       ← Complexity score + classification
+│   └── intent-constructor.ts      ← BizTalkApplication → partial IntegrationIntent (TODO_CLAUDE bridge)
 │
 ├── stage2-document/
 │   ├── gap-analyzer.ts            ← 13 gap definitions, severity-ranked
@@ -652,14 +866,32 @@ src/
 │   └── refinement-engine.ts       ← Iterative NLP-driven refinement
 │
 ├── mcp-server/
-│   ├── server.ts                  ← MCP stdio transport, tool registration
-│   └── tools/
-│       ├── definitions.ts         ← Tool input schemas (26 tools)
-│       ├── handler.ts             ← Tool call dispatch
-│       └── schemas.ts             ← Zod validation schemas
+│   ├── server.ts                  ← MCP stdio transport, 34 tools, 8 resources
+│   ├── tools/
+│   │   ├── definitions.ts         ← Tool definitions (34 tools, tier-gated)
+│   │   ├── handler.ts             ← Tool call dispatch
+│   │   ├── schemas.ts             ← Zod validation schemas
+│   │   └── file-tools.ts          ← readArtifact() + listArtifacts() implementations
+│   └── prompts/
+│       └── migration-guide.ts     ← 5 guided prompts with 5-step chain protocol
+│
+├── validation/
+│   ├── workflow-validator.ts      ← 29 WDL rules (14 errors, 7 warnings, 8 suggestions)
+│   ├── connections-validator.ts   ← 6 connection rules
+│   ├── package-validator.ts       ← Cross-file validation
+│   ├── quality-scorer.ts          ← 0-100 quality scoring (grades A-F)
+│   └── index.ts                   ← Barrel exports
+│
+├── runner/
+│   ├── types.ts                   ← MigrationRunOptions, MigrationRunResult, enrichment types
+│   ├── claude-client.ts           ← Tri-mode Claude client (dev / direct / proxy)
+│   ├── migration-runner.ts        ← runMigration() — 5-step pipeline engine
+│   ├── report-generator.ts        ← Generates migration-report.md
+│   ├── output-writer.ts           ← Writes Logic Apps project layout to disk
+│   └── index.ts                   ← Barrel exports
 │
 ├── cli/
-│   └── index.ts                   ← CLI entry point (analyze/document/migrate/design)
+│   └── index.ts                   ← CLI entry point (run / analyze / build / convert / templates)
 │
 └── vscode/
     ├── extension.ts               ← VS Code extension entry point
@@ -672,7 +904,9 @@ schemas/
 ├── component-mapping.json  ← ComponentMigrationMapping schema
 └── decision-trees.json     ← Decision tree data for architecture recommendations
 
-docs/reference/
+docs/
+├── proxy-api-spec.md            ← REST API contract for the hosted proxy service (POST /v1/enrich, /v1/review)
+└── reference/
 ├── biztalk-architecture.md      ← BizTalk core concepts reference
 ├── logicapps-architecture.md    ← Logic Apps WDL reference
 ├── component-mapping.md         ← Full BizTalk → Logic Apps mapping table
@@ -686,10 +920,21 @@ tests/
 ├── fixtures/                    ← Input → transform → expected-output trios
 │   ├── 01-map-scripting-functoids/
 │   ├── 02-simple-file-receive/
+│   │   ├── training-pair.json       ← BizTalk → IntegrationIntent → LogicApps trio
+│   │   └── expected-logic-apps/     ← Golden master workflow.json + connections.json
 │   └── 03-content-based-routing/
-├── unit/                        ← Unit tests (10 suites, 100+ tests)
-└── integration/
-    └── pipeline.test.ts         ← Stage 1 → 2 → 3 pipeline tests (50 tests)
+│       ├── training-pair.json
+│       └── expected-logic-apps/
+├── unit/                        ← Unit tests (10 suites, ~110 tests)
+├── integration/
+│   └── pipeline.test.ts         ← Stage 1 → 2 → 3 pipeline tests (50 tests)
+├── golden-master/
+│   ├── comparison-engine.ts     ← 3-level diff: exact / semantic / topology
+│   └── golden-master.test.ts    ← Fixture discovery + 80% similarity threshold
+└── regression/
+    ├── quality-baseline.json    ← Baseline quality scores per fixture
+    ├── regression-runner.test.ts ← Quality regression guard (2-point tolerance)
+    └── snapshot.test.ts         ← Vitest snapshots for deterministic Stage 1/2 outputs
 ```
 
 ---
@@ -762,4 +1007,338 @@ Consistent naming enables policy-driven governance, cost allocation by departmen
 
 Commercial license required for Stage 3 (Build) and Greenfield features. Free tier gives full access to Stage 1 (parse + analyze) and Stage 2 (gap analysis + architecture recommendation).
 
-Contact [your-contact] for consultant seat pricing.
+For consultant seat pricing, contact **[Me@Jonlevesque.com](mailto:Me@Jonlevesque.com)**.
+
+---
+
+## Usage Guide
+
+This section walks through a complete migration engagement — from first connection to a deployable Logic Apps package.
+
+### Before You Start
+
+**What you need:**
+
+- Node.js 20 or later (`node --version`)
+- Claude Desktop or VS Code + Claude Code
+- Your BizTalk application's export files (`.odx`, `.btm`, `.btp`, `BindingInfo.xml`)
+- A license key for Standard or Premium features (free tier gives Stage 1 + Stage 2 only)
+
+**How to export BizTalk artifacts:**
+
+1. Open BizTalk Administration Console
+2. Right-click the application → **Export** → **MSI file**
+3. From the extracted MSI, locate the Visual Studio project folders — `.odx`, `.btm`, `.btp` files are in the VS project
+4. For binding XML: right-click the application → **Export** → **Bindings** → save as `BindingInfo.xml`
+
+---
+
+### Connect to Claude
+
+#### Option A: Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "biztalk-migration": {
+      "command": "node",
+      "args": ["/absolute/path/to/BiztalktoLogicapps/dist/mcp-server/server.js"],
+      "env": {
+        "BIZTALK_LICENSE_KEY": "your-license-key-here"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop. You should see "biztalk-migration" in the MCP tools panel (hammer icon).
+
+**Verify it's connected:** Ask Claude: *"What BizTalk migration tools are available?"* — it should list tools like `analyze_orchestration`, `build_package`, etc.
+
+#### Option B: VS Code with Claude Code
+
+The repo already includes `.vscode/mcp.json`. Open the repo folder in VS Code and Claude Code connects automatically.
+
+Set your license key in one of:
+- VS Code setting: `biztalkMigrate.licenseKey`
+- Shell environment: `export BIZTALK_LICENSE_KEY="your-key"` (add to `~/.zshrc` or `~/.bashrc`)
+- `.env` file in the project root (not committed)
+
+---
+
+### Run a Migration
+
+#### 1. Start the guided prompt
+
+In Claude, invoke the `guided_migration` prompt. This loads a pre-built conversation starter that instructs Claude to follow the 5-step migration protocol.
+
+**In Claude Desktop:** Click the prompt icon (or type `/`) and select `guided_migration`. Fill in:
+- `applicationName` — e.g. `CustomerOnboarding`
+- `artifactCount` — approximate number of files (optional)
+
+**In Claude Code:**
+```
+Use the guided_migration prompt with applicationName="CustomerOnboarding"
+```
+
+Claude responds with the 5-step plan and asks for the first artifact.
+
+#### 2. Provide artifacts
+
+Claude asks for artifacts one at a time. Two ways to provide them:
+
+**Paste XML directly** (for small files or when working remotely):
+```xml
+<!-- Paste the full content of ProcessOrder.odx here -->
+<BizTalkServerProject>
+  <Module>...</Module>
+</BizTalkServerProject>
+```
+
+**Provide a directory path** (when Claude has local filesystem access — VS Code recommended):
+```
+The artifacts are at /Users/me/projects/CustomerOnboarding/src/BizTalk/
+```
+Claude calls `list_artifacts` to discover all files, then `read_artifact` for each one.
+
+**Typical order:** orchestrations (`.odx`) → binding XML → maps (`.btm`) → pipelines (`.btp`). Provide what you have — missing types are noted in the gap analysis.
+
+#### 3. Review the migration spec
+
+After all artifacts are analyzed, Claude shows you the **migration specification** before generating any code:
+
+```
+Complexity: Moderate (score: 34/100)
+Hot spots: 2 scripting functoids, 1 long-running scope
+
+🔴 CRITICAL: Long-running transaction (ScopeShape with LongRunning)
+   → Mitigation: Saga/compensation pattern using child workflows
+   → Effort: 3–5 days
+
+🟡 MEDIUM: Scripting functoid (ProcessMap.btm — CalculateDiscount)
+   → Mitigation: Rewrite as Azure Function or standard XSLT template
+   → Effort: 1 day
+
+Architecture: Logic Apps Standard (cloud)
+Required: Azure Blob Storage, Azure Service Bus
+Integration Account: Not required
+Estimated workflows: 2
+```
+
+Review this before approving — the spec is cheap to fix, the generated JSON is not. When satisfied: **"Looks good — go ahead and build the package."**
+
+#### 4. Generate the package
+
+Claude calls `build_package`, assembles the project, then reviews its own output:
+
+1. Fills any `TODO_CLAUDE` placeholders
+2. Translates XLANG/s expressions to WDL `@{...}` syntax
+3. Adds retry policies to HTTP actions
+4. Wraps the main flow in an error-handling Scope
+
+Output artifacts appear in the conversation: `workflow.json`, `connections.json`, `local.settings.json`.
+
+#### 5. Validate and score
+
+Claude runs validation and scoring automatically. You can also ask explicitly:
+
+```
+Please validate the workflow and score the migration quality.
+```
+
+Example output:
+```
+Errors (fix before deployment):
+  ✗ runafter-case: "Send_To_Queue" runAfter value "Succeeded" must be "SUCCEEDED"
+
+Warnings:
+  ⚠ retry-policy-missing: HTTP action "Call_API" has no retryPolicy
+
+Quality Score: 82/100 — Grade B
+  Structural:     38/40
+  Completeness:   26/30 — missing retry on 1 HTTP action
+  Best Practices: 16/20 — no tracked properties
+  Naming:          2/10 — connections don't follow CN- convention
+```
+
+Target **grade B (≥75/100)** before handing off to the customer. Ask Claude to fix any flagged issues.
+
+---
+
+### Deploy the Output
+
+#### Azure Portal (quickest for evaluation)
+
+1. Create a **Logic Apps Standard** resource (not Consumption)
+2. Go to **Deployment Center** → **Advanced**
+3. Upload the generated package as a ZIP
+
+#### VS Code Logic Apps Extension (recommended for development)
+
+1. Install the **Azure Logic Apps (Standard)** VS Code extension
+2. Open the generated project folder
+3. Right-click the Logic App → **Deploy to Logic App**
+4. Fill in App Settings from `local.settings.json`
+
+#### Azure CLI / Bicep (recommended for production)
+
+```bash
+az deployment group create \
+  --resource-group rg-integration-prod \
+  --template-file infra/main.bicep \
+  --parameters @infra/parameters.json
+
+az logicapp deployment source config-zip \
+  --resource-group rg-integration-prod \
+  --name LAStd-Finance-AP-Prod \
+  --src ./logic-apps-package.zip
+```
+
+#### Filling in App Settings
+
+`local.settings.json` uses placeholder references:
+
+```json
+{
+  "Values": {
+    "KVS_DB_ServiceBus_ConnectionString": "@AppSetting('KVS_DB_ServiceBus_ConnectionString')",
+    "Common_API_Sftp_Host": "sftp.example.com"
+  }
+}
+```
+
+- **`KVS_` prefix** → store the real value in **Azure Key Vault** and set the App Setting to a Key Vault reference: `@Microsoft.KeyVault(VaultName=my-vault;SecretName=ServiceBus-ConnectionString)`
+- **`Common_` prefix** → non-sensitive values (hostnames, ports) set directly as App Settings
+
+---
+
+### Greenfield NLP Mode (Premium)
+
+Build a new Logic Apps workflow from a plain English description — no BizTalk source needed.
+
+**Guided design (shows architecture review before building):**
+
+```
+Use the guided_greenfield prompt with description="Poll an SFTP server every 15 minutes,
+pick up new XML order files, validate, transform to JSON, POST to our order API,
+and if it fails send an alert email to ops@example.com"
+```
+
+Claude shows connector choices, required Azure services, cost estimate, and clarifying questions before building.
+
+**Quick build** (skip design review for simple, unambiguous requirements):
+
+```
+Use the quick_workflow_build prompt with description="..."
+```
+
+**Browse templates:**
+
+```
+List the available Logic Apps templates, filter by category "file-processing"
+```
+
+---
+
+### Validation Reference
+
+Ask Claude to run any validation explicitly:
+
+| What to check | Say to Claude |
+|---|---|
+| Workflow errors | "Validate this workflow.json" + paste content |
+| Connections file | "Validate my connections.json" |
+| Full package cross-check | "Run a full package validation" |
+| IntegrationIntent correctness | "Validate this IntegrationIntent" + paste JSON |
+| Quality score | "Score this workflow quality" + paste workflow.json |
+
+**Key WDL rules enforced:**
+
+- `runAfter` values must be `"SUCCEEDED"`, `"FAILED"`, `"TIMEDOUT"`, `"SKIPPED"` — ALL CAPS
+- Every action needs a `runAfter` key (`{}` for first action after trigger)
+- No cycles in the runAfter dependency graph
+- ServiceProvider actions need `serviceProviderConfiguration` with `connectionName`, `operationId`, `serviceProviderId`
+- Sensitive values must use `@AppSetting('...')` — never hardcoded
+
+---
+
+### Quality Scoring
+
+| Dimension | Weight | What it checks |
+|---|---|---|
+| Structural | 40 pts | Valid JSON, schema URL, triggers, runAfter ALL CAPS, no cycles, ServiceProvider configs |
+| Completeness | 30 pts | Error handling scope, retry policies on HTTP actions, terminate on failure |
+| Best Practices | 20 pts | Built-in connectors preferred, tracked properties, KVS_ for secrets |
+| Naming | 10 pts | PascalCase action names, CN- prefix for connections |
+
+| Grade | Score | Meaning |
+|---|---|---|
+| A | ≥90 | Deployment-ready, all best practices followed |
+| B | 75–89 | Ready to deploy; minor improvements recommended |
+| C | 60–74 | Deployable but needs review before production |
+| D | 40–59 | Significant issues — address before deployment |
+| F | <40 | Structural problems — likely won't deploy |
+
+---
+
+### Common Issues
+
+**"License validation failed" — running in free tier**
+
+Check that `BIZTALK_LICENSE_KEY` is set in the MCP server config. Free tier covers Stage 1 and Stage 2 only. Stage 3 (generate workflow.json) requires Standard or above.
+
+**"Unknown tool: construct_intent" or similar**
+
+Rebuild and restart: `npm run build`, then restart Claude Desktop or reload the VS Code window.
+
+**Workflow deploys but triggers don't fire**
+
+The `connectionName` in `workflow.json` (`serviceProviderConfiguration.connectionName`) must match the key in `connections.json` (`serviceProviderConnections`) exactly — case-sensitive.
+
+**runAfter errors in VS Code Logic Apps designer**
+
+Every action name in a `runAfter` object must exactly match a real action name in the same workflow (case-sensitive, space-sensitive).
+
+**XSLT fails with "msxsl:script not supported"**
+
+BizTalk scripting functoids produce `<msxsl:script>` C# blocks, which Logic Apps Transform XML does not support. The map converter flags these as `xslt-rewrite` or `azure-function`. Either rewrite the C# logic as standard XSLT `<xsl:template>` transforms, or extract it to an Azure Function.
+
+**"TODO_CLAUDE" in generated workflow.json**
+
+Claude couldn't automatically translate a value (e.g. a complex XLANG/s expression). Ask it to fill the markers in:
+
+```
+Please fill in the TODO_CLAUDE placeholders. The Decide shape expression was:
+[paste original XLANG/s condition]
+```
+
+**Migration spec has wrong adapter type or missing transformation**
+
+Correct it before approving:
+
+```
+The binding file shows FTP, not FILE. Address is ftp://files.example.com/orders/
+Please update the migration spec.
+```
+
+**Loop conditions are inverted**
+
+BizTalk LoopShape runs *while* the condition is true; Logic Apps Until runs *until* it is true. Generated Until actions invert the expression automatically — review all loop conditions, especially those with `&&` / `||` (De Morgan's law applies).
+
+---
+
+### Tips for Complex Applications
+
+- **Large applications (5+ orchestrations):** analyze one orchestration at a time, get the gap analysis for each before building
+- **Sequential convoy patterns:** ensure your Service Bus queue has sessions enabled before deployment
+- **Custom pipeline components:** no automatic equivalent — flag early, plan manual work with the customer
+- **Long-running scopes with compensation:** needs a Saga/child-workflow redesign — get customer sign-off before building
+- **EDI applications:** always require an Azure Integration Account (B1 or B2 tier) — budget for provisioning before the build phase
+
+---
+
+## Support
+
+Questions, issues, or consultant seat pricing: **[Me@Jonlevesque.com](mailto:Me@Jonlevesque.com)**

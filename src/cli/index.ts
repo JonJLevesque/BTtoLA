@@ -40,6 +40,8 @@ import { convertMap }          from '../stage3-build/map-converter.js';
 import { buildPackage }        from '../stage3-build/package-builder.js';
 import { listTemplates }       from '../greenfield/template-library.js';
 import { validateLicense }     from '../licensing/index.js';
+import { runMigration }        from '../runner/index.js';
+import { writeOutput }         from '../runner/index.js';
 import type { BizTalkApplication } from '../types/biztalk.js';
 import type { MigrationResult }    from '../types/migration.js';
 
@@ -53,6 +55,9 @@ program
   .version('0.1.0')
   .option('--license <key>', 'License key (overrides BIZTALK_LICENSE_KEY env var)')
   .hook('preAction', async (cmd) => {
+    if (process.env['BTLA_DEV_MODE'] === 'true') {
+      console.log(chalk.magenta('⚡ Dev mode active — all features unlocked'));
+    }
     const key = cmd.opts()['license'] ?? process.env['BIZTALK_LICENSE_KEY'];
     if (key) {
       try {
@@ -63,6 +68,84 @@ program
       } catch {
         // offline — continue
       }
+    }
+  });
+
+// ─── run command (one-command pipeline) ──────────────────────────────────────
+
+program
+  .command('run')
+  .description('Run the full BizTalk → Logic Apps migration pipeline in one command')
+  .requiredOption('--dir <path>', 'Directory containing BizTalk artifacts (.odx, .btm, .btp, BindingInfo.xml)')
+  .requiredOption('--app <name>', 'BizTalk application name')
+  .option('--output <dir>', 'Output directory for generated Logic Apps project', './logic-apps-output')
+  .option('--skip-enrichment', 'Skip Claude AI enrichment (offline/dev mode)')
+  .action(async (opts) => {
+    const spinner = ora().start();
+
+    const steps: string[] = [];
+    const startTime = Date.now();
+
+    try {
+      const result = await runMigration({
+        artifactDir:     opts.dir as string,
+        appName:         opts.app as string,
+        outputDir:       opts.output as string,
+        skipEnrichment:  !!(opts.skipEnrichment as boolean | undefined),
+        onProgress: ({ step, message, detail }) => {
+          const label = `[${step.toUpperCase().padEnd(8)}]`;
+          spinner.text = `${chalk.cyan(label)} ${message}${detail ? chalk.gray(' — ' + detail) : ''}`;
+          steps.push(`${label} ${message}`);
+        },
+      });
+
+      if (!result.success) {
+        spinner.fail(chalk.red('Migration failed'));
+        for (const e of result.errors) {
+          console.error(chalk.red(`  ✗ ${e}`));
+        }
+        process.exit(1);
+      }
+
+      // Write output to disk
+      spinner.text = '[WRITE   ] Writing output files...';
+      writeOutput({
+        outputDir:      opts.output as string,
+        buildResult:    result.buildResult!,
+        migrationReport: result.migrationReport,
+      });
+
+      spinner.succeed(chalk.green('Migration complete'));
+
+      // Print summary
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log('');
+      console.log(chalk.bold('── Migration Summary ────────────────────────────────'));
+      console.log(`  Application:  ${chalk.cyan(opts.app as string)}`);
+      console.log(`  Output:       ${chalk.cyan(opts.output as string)}`);
+      console.log(`  Workflows:    ${chalk.cyan(result.buildResult?.project.workflows.length ?? 0)}`);
+      if (result.qualityReport) {
+        const gradeColor = result.qualityReport.grade <= 'B' ? chalk.green : chalk.yellow;
+        console.log(`  Quality:      ${gradeColor(`${result.qualityReport.totalScore}/100 Grade ${result.qualityReport.grade}`)}`);
+      }
+      console.log(`  Time:         ${elapsed}s`);
+
+      if (result.warnings.length > 0) {
+        const unique = [...new Set(result.warnings)];
+        console.log(`  Warnings:     ${chalk.yellow(unique.length)}`);
+        for (const w of unique.slice(0, 5)) {
+          console.log(chalk.yellow(`    ⚠ ${w}`));
+        }
+      }
+
+      console.log('');
+      console.log(`  ${chalk.bold('migration-report.md')} written to ${chalk.cyan(opts.output as string)}`);
+      console.log(chalk.bold('────────────────────────────────────────────────────\n'));
+
+    } catch (error) {
+      spinner.fail('Migration pipeline failed');
+      console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+      process.exit(1);
     }
   });
 

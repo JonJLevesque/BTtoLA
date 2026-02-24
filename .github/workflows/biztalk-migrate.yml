@@ -1,0 +1,89 @@
+# BizTalk to Logic Apps — Automated Migration Pipeline
+#
+# Triggers on workflow_dispatch so consultants can run it from
+# the GitHub Actions UI or via the GitHub CLI without any local tooling.
+#
+# Required secrets:
+#   BIZTALK_LICENSE_KEY   — License key for the migration service
+# Optional secrets:
+#   ANTHROPIC_API_KEY     — For direct Claude enrichment (bypasses proxy)
+#
+# Inputs:
+#   artifact_dir   — Relative path to BizTalk artifacts in this repo
+#   app_name       — BizTalk application name (used in output/report)
+#   output_dir     — Where to write the Logic Apps project (default: logic-apps-output)
+
+name: BizTalk to Logic Apps Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_dir:
+        description: 'Path to BizTalk artifacts directory (relative to repo root)'
+        required: true
+        default: 'artifacts'
+      app_name:
+        description: 'BizTalk application name'
+        required: true
+      output_dir:
+        description: 'Output directory for Logic Apps project'
+        required: false
+        default: 'logic-apps-output'
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    name: Run BizTalk Migration
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Run migration pipeline
+        env:
+          BIZTALK_LICENSE_KEY: ${{ secrets.BIZTALK_LICENSE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ARTIFACT_DIR: ${{ github.event.inputs.artifact_dir }}
+          APP_NAME: ${{ github.event.inputs.app_name }}
+          OUTPUT_DIR: ${{ github.event.inputs.output_dir }}
+        run: |
+          node dist/cli/index.js run \
+            --dir "$ARTIFACT_DIR" \
+            --app "$APP_NAME" \
+            --output "$OUTPUT_DIR"
+
+      - name: Upload Logic Apps package
+        uses: actions/upload-artifact@v4
+        with:
+          name: logic-apps-${{ github.run_number }}
+          path: ${{ github.event.inputs.output_dir }}/
+          retention-days: 30
+
+      - name: Post migration report to job summary
+        if: always()
+        env:
+          OUTPUT_DIR: ${{ github.event.inputs.output_dir }}
+        run: |
+          REPORT_FILE="${OUTPUT_DIR}/migration-report.md"
+          if [ -f "$REPORT_FILE" ]; then
+            echo "## BizTalk Migration Report" >> "$GITHUB_STEP_SUMMARY"
+            cat "$REPORT_FILE" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## Migration Report" >> "$GITHUB_STEP_SUMMARY"
+            echo "Report not generated — check the migration step logs above." >> "$GITHUB_STEP_SUMMARY"
+          fi

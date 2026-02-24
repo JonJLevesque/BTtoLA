@@ -1,0 +1,298 @@
+/**
+ * Migration Report Generator
+ *
+ * Produces a consultant-ready migration-report.md with:
+ *   - Executive Summary table
+ *   - Gap analysis table
+ *   - Architecture recommendation
+ *   - Generated artifacts inventory
+ *   - Quality score and grade
+ *   - Deployment instructions
+ *   - Manual next steps
+ *   - Warnings list
+ *
+ * Support: Me@Jonlevesque.com
+ */
+
+import type { BizTalkApplication } from '../types/biztalk.js';
+import type { BuildResult } from '../stage3-build/package-builder.js';
+import type { QualityReport } from '../validation/quality-scorer.js';
+import type { MigrationGap } from '../types/migration.js';
+import type { MigrationStep } from './types.js';
+
+export interface ReportInput {
+  app: BizTalkApplication;
+  buildResult: BuildResult;
+  qualityReport: QualityReport;
+  gaps: MigrationGap[];
+  outputDir: string;
+  errors: string[];
+  warnings: string[];
+  timings: Partial<Record<MigrationStep, number>>;
+  clientMode: 'proxy' | 'direct' | 'dev';
+}
+
+export function generateMigrationReport(input: ReportInput): string {
+  const {
+    app,
+    buildResult,
+    qualityReport,
+    gaps,
+    outputDir,
+    errors,
+    warnings,
+    timings,
+    clientMode,
+  } = input;
+
+  const date = new Date().toISOString().split('T')[0]!;
+  const totalMs = Object.values(timings).reduce((a, b) => a + (b ?? 0), 0);
+  const criticalGaps = gaps.filter(g => g.severity === 'critical');
+  const highGaps     = gaps.filter(g => g.severity === 'high');
+  const mediumGaps   = gaps.filter(g => g.severity === 'medium');
+
+  const gradeEmoji = { A: '🟢', B: '🟢', C: '🟡', D: '🟠', F: '🔴' };
+  const grade = qualityReport.grade;
+  const gradeIcon = gradeEmoji[grade] ?? '⚪';
+
+  const lines: string[] = [];
+
+  // ── Header ──────────────────────────────────────────────────────────────────
+
+  lines.push(`# BizTalk Migration Report: ${app.name}`);
+  lines.push('');
+  lines.push(`Generated: ${date} | AI mode: ${clientMode} | Runtime: ${(totalMs / 1000).toFixed(1)}s`);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  // ── Executive Summary ────────────────────────────────────────────────────────
+
+  lines.push('## Executive Summary');
+  lines.push('');
+  lines.push('| Property | Value |');
+  lines.push('|----------|-------|');
+  lines.push(`| Application | ${app.name} |`);
+  lines.push(`| Complexity | ${app.complexityClassification} (${app.complexityScore}/100) |`);
+  lines.push(`| Orchestrations | ${app.orchestrations.length} |`);
+  lines.push(`| Maps | ${app.maps.length} |`);
+  lines.push(`| Pipelines | ${app.pipelines.length} |`);
+  lines.push(`| Bindings | ${app.bindingFiles.length} |`);
+  lines.push(`| Workflows generated | ${buildResult.project.workflows.length} |`);
+  lines.push(`| Quality score | ${gradeIcon} ${qualityReport.totalScore}/100 Grade ${grade} |`);
+  lines.push(`| Critical gaps | ${criticalGaps.length} |`);
+  lines.push(`| High gaps | ${highGaps.length} |`);
+  lines.push(`| Medium gaps | ${mediumGaps.length} |`);
+  lines.push('');
+
+  // ── Gap Analysis ─────────────────────────────────────────────────────────────
+
+  if (gaps.length > 0) {
+    lines.push('## Gap Analysis');
+    lines.push('');
+    lines.push('| Severity | Capability | Mitigation |');
+    lines.push('|----------|-----------|-----------|');
+    for (const gap of [...criticalGaps, ...highGaps, ...mediumGaps]) {
+      const sev = gap.severity === 'critical' ? '🔴 Critical' :
+                  gap.severity === 'high'     ? '🟠 High'     : '🟡 Medium';
+      lines.push(`| ${sev} | ${gap.capability} | ${gap.mitigation} |`);
+    }
+    lines.push('');
+  } else {
+    lines.push('## Gap Analysis');
+    lines.push('');
+    lines.push('✅ No migration gaps detected — clean migration.');
+    lines.push('');
+  }
+
+  // ── Architecture Recommendation ───────────────────────────────────────────────
+
+  lines.push('## Architecture Recommendation');
+  lines.push('');
+  lines.push('**Target:** Azure Logic Apps Standard (single-tenant)');
+  lines.push('');
+
+  const hasOnPrem = app.bindingFiles.some(b =>
+    b.receiveLocations.some(r => r.address?.startsWith('C:\\') || r.address?.startsWith('\\\\')) ||
+    b.sendPorts.some(s => s.address?.startsWith('C:\\') || s.address?.startsWith('\\\\'))
+  );
+
+  if (hasOnPrem) {
+    lines.push('**On-premises connectivity:** On-premises data gateway required for FILE/SQL adapters with local paths.');
+    lines.push('');
+  }
+
+  if (app.maps.length > 0) {
+    lines.push('**Integration Account:** Required for XSLT map execution from converted .btm files.');
+    lines.push('');
+  }
+
+  lines.push('**Connector strategy:** ServiceProvider (built-in) connectors used where available for better performance and simpler configuration.');
+  lines.push('');
+
+  // ── Generated Artifacts ────────────────────────────────────────────────────────
+
+  lines.push('## Generated Artifacts');
+  lines.push('');
+  lines.push(`Output directory: \`${outputDir}\``);
+  lines.push('');
+
+  if (buildResult.project.workflows.length > 0) {
+    lines.push('**Workflows:**');
+    for (const wf of buildResult.project.workflows) {
+      lines.push(`- \`${wf.name}/workflow.json\``);
+    }
+    lines.push('');
+  }
+
+  const xsltCount = Object.keys(buildResult.project.xsltMaps).length;
+  const lmlCount  = Object.keys(buildResult.project.lmlMaps).length;
+  if (xsltCount + lmlCount > 0) {
+    lines.push('**Maps:**');
+    for (const name of Object.keys(buildResult.project.xsltMaps)) {
+      lines.push(`- \`Maps/${name}\` (XSLT)`);
+    }
+    for (const name of Object.keys(buildResult.project.lmlMaps)) {
+      lines.push(`- \`Maps/${name}\` (Data Mapper LML)`);
+    }
+    lines.push('');
+  }
+
+  lines.push('**Configuration files:**');
+  lines.push('- `connections.json` — connector configuration');
+  lines.push('- `host.json` — Logic Apps host settings');
+  lines.push('- `local.settings.json` — local dev settings (gitignore this)');
+  if (Object.keys(buildResult.armTemplate).length > 0) {
+    lines.push('- `arm-template.json` — ARM deployment template');
+    lines.push('- `arm-parameters.json` — ARM parameters');
+  }
+  lines.push('');
+
+  // ── Quality Report ────────────────────────────────────────────────────────────
+
+  lines.push('## Quality Report');
+  lines.push('');
+  lines.push(`**Score:** ${qualityReport.totalScore}/100  **Grade:** ${gradeIcon} ${grade}`);
+  lines.push('');
+  lines.push(`> ${qualityReport.summary}`);
+  lines.push('');
+
+  if (qualityReport.dimensions.length > 0) {
+    lines.push('| Dimension | Score | Max |');
+    lines.push('|-----------|-------|-----|');
+    for (const dim of qualityReport.dimensions) {
+      lines.push(`| ${dim.name} | ${dim.score} | ${dim.maxScore} |`);
+    }
+    lines.push('');
+  }
+
+  if (qualityReport.recommendations.length > 0) {
+    lines.push('**Recommendations:**');
+    for (const rec of qualityReport.recommendations) {
+      lines.push(`- ${rec}`);
+    }
+    lines.push('');
+  }
+
+  // ── Deployment Instructions ───────────────────────────────────────────────────
+
+  lines.push('## Deployment Instructions');
+  lines.push('');
+  lines.push('### Prerequisites');
+  lines.push('- Azure subscription with Logic Apps Standard resource');
+  lines.push('- Azure CLI (`az login`)');
+  lines.push('- VS Code with Azure Logic Apps (Standard) extension');
+  lines.push('');
+  lines.push('### Steps');
+  lines.push('');
+  lines.push('1. **Configure app settings** in Azure Portal → Logic App → Configuration:');
+  lines.push('   - Add all `KVS_*` secrets as Key Vault references');
+  lines.push('   - Add all `Common_*` and `Workflow_*` settings as plain values');
+  lines.push('');
+  lines.push('2. **Deploy via VS Code:**');
+  lines.push('   ```');
+  lines.push(`   Right-click \`${outputDir}\` → Deploy to Logic App...`);
+  lines.push('   ```');
+  lines.push('');
+  lines.push('3. **Deploy via Azure CLI:**');
+  lines.push('   ```bash');
+  lines.push(`   az logicapp deployment source config-zip \\`);
+  lines.push(`    --name <logic-app-name> \\`);
+  lines.push(`    --resource-group <resource-group> \\`);
+  lines.push(`    --src <path-to-zip>`);
+  lines.push('   ```');
+  lines.push('');
+  lines.push('4. **Verify:** Open Logic App in Azure Portal → check each workflow runs successfully.');
+  lines.push('');
+
+  // ── Manual Next Steps ─────────────────────────────────────────────────────────
+
+  lines.push('## Manual Next Steps');
+  lines.push('');
+
+  const nextSteps: string[] = [];
+
+  if (criticalGaps.length > 0) {
+    nextSteps.push(`**Address ${criticalGaps.length} critical gap(s)** before deployment:`);
+    for (const g of criticalGaps) {
+      nextSteps.push(`  - ${g.capability}: ${g.mitigation}`);
+    }
+  }
+
+  if (app.maps.length > 0) {
+    nextSteps.push('Review converted XSLT maps — C# scripting functoids require Azure Functions replacement');
+  }
+
+  nextSteps.push('Replace all `KVS_*` placeholder values with actual Key Vault secret URIs');
+  nextSteps.push('Test each workflow end-to-end with representative sample messages');
+  nextSteps.push('Set up Azure Monitor alerts for workflow failures');
+
+  if (hasOnPrem) {
+    nextSteps.push('Install and register On-premises Data Gateway for FILE/SQL connectors');
+  }
+
+  for (const step of nextSteps) {
+    lines.push(`- ${step}`);
+  }
+  lines.push('');
+
+  // ── Warnings ──────────────────────────────────────────────────────────────────
+
+  if (warnings.length > 0) {
+    lines.push('## Warnings');
+    lines.push('');
+    const uniqueWarnings = [...new Set(warnings)];
+    for (const w of uniqueWarnings.slice(0, 20)) {
+      lines.push(`- ⚠ ${w}`);
+    }
+    if (uniqueWarnings.length > 20) {
+      lines.push(`- ... and ${uniqueWarnings.length - 20} more`);
+    }
+    lines.push('');
+  }
+
+  // ── Errors ────────────────────────────────────────────────────────────────────
+
+  if (errors.length > 0) {
+    lines.push('## Non-Fatal Errors');
+    lines.push('');
+    lines.push('These issues were encountered but did not stop the migration:');
+    lines.push('');
+    for (const e of errors.slice(0, 10)) {
+      lines.push(`- ❌ ${e}`);
+    }
+    if (errors.length > 10) {
+      lines.push(`- ... and ${errors.length - 10} more`);
+    }
+    lines.push('');
+  }
+
+  // ── Footer ────────────────────────────────────────────────────────────────────
+
+  lines.push('---');
+  lines.push('');
+  lines.push('*Generated by BizTalk to Logic Apps Migration Framework*');
+  lines.push('*Support: Me@Jonlevesque.com*');
+
+  return lines.join('\n');
+}

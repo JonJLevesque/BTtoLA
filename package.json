@@ -91,6 +91,11 @@
         "command": "biztalk-migrate.listTemplates",
         "title": "Browse Template Library (Premium)",
         "category": "BizTalk Migrate"
+      },
+      {
+        "command": "biztalk-migrate.runMigration",
+        "title": "Run Migration (One-Command Pipeline)",
+        "category": "BizTalk Migrate"
       }
     ],
     "configuration": {
@@ -150,6 +155,7 @@
     }
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "commander": "^12.0.0",
     "fast-xml-parser": "^4.3.0",
