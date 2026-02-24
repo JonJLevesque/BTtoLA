@@ -194,7 +194,7 @@ async function startMcpServer(context: vscode.ExtensionContext): Promise<void> {
   const licenseKey = vscode.workspace.getConfiguration('biztalkMigrate').get<string>('licenseKey');
 
   mcpServerProcess = spawn('node', [serverPath], {
-    env:   { ...process.env, BIZTALK_LICENSE_KEY: licenseKey ?? '' },
+    env:   { ...process.env, BTLA_LICENSE_KEY: licenseKey ?? '' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
 
@@ -271,7 +271,7 @@ async function runMigrationCommand(context: vscode.ExtensionContext): Promise<vo
 
   const licenseKey = vscode.workspace.getConfiguration('biztalkMigrate').get<string>('licenseKey');
   if (licenseKey) {
-    process.env['BIZTALK_LICENSE_KEY'] = licenseKey;
+    process.env['BTLA_LICENSE_KEY'] = licenseKey;
   }
 
   await vscode.window.withProgress(

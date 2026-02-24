@@ -230,7 +230,7 @@ ANTHROPIC_API_KEY=sk-... node dist/cli/index.js run \
   --output ./logic-apps-output
 
 # Proxy mode — license key authenticates against the hosted proxy
-BIZTALK_LICENSE_KEY=your-key node dist/cli/index.js run \
+BTLA_LICENSE_KEY=your-key node dist/cli/index.js run \
   --dir ./biztalk-artifacts \
   --app "CustomerOnboarding" \
   --output ./logic-apps-output
@@ -271,7 +271,7 @@ Command palette (`Cmd+Shift+P`) → **BizTalk Migrate: Run Migration (One-Comman
 |---|---|---|
 | `BTLA_DEV_MODE=true` | dev | No API calls. Partial intent used as-is. Fast, free, offline. |
 | `ANTHROPIC_API_KEY=sk-...` | direct | Calls Anthropic API directly using `claude-sonnet-4-6`. Good for self-hosting. |
-| `BIZTALK_LICENSE_KEY=...` | proxy | Calls the hosted proxy at `https://api.biztalk-migrate.com/v1`. System prompt on server side. |
+| `BTLA_LICENSE_KEY=...` | proxy | Calls the hosted proxy at `https://api.biztalk-migrate.com/v1`. System prompt on server side. |
 
 All modes produce the same output structure. Claude failures are non-fatal — the runner falls back to the partial intent rather than stopping.
 
@@ -303,7 +303,7 @@ analyze options:
   --verbose         Show detailed output
 
 Global options:
-  --license <key>   License key (overrides BIZTALK_LICENSE_KEY env var)
+  --license <key>   License key (overrides BTLA_LICENSE_KEY env var)
 ```
 
 ### Example: Full Migration Run
@@ -345,7 +345,7 @@ The repo ships `.github/workflows/biztalk-migrate.yml` — a `workflow_dispatch`
 
 ### Setup
 
-1. Add `BIZTALK_LICENSE_KEY` to your repo's **Settings → Secrets and variables → Actions**
+1. Add `BTLA_LICENSE_KEY` to your repo's **Settings → Secrets and variables → Actions**
 2. Optionally add `ANTHROPIC_API_KEY` for direct Claude enrichment
 3. Commit your BizTalk artifacts to the repo (e.g. under `artifacts/`)
 
@@ -1046,7 +1046,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
       "command": "node",
       "args": ["/absolute/path/to/BiztalktoLogicapps/dist/mcp-server/server.js"],
       "env": {
-        "BIZTALK_LICENSE_KEY": "your-license-key-here"
+        "BTLA_LICENSE_KEY": "your-license-key-here"
       }
     }
   }
@@ -1063,7 +1063,7 @@ The repo already includes `.vscode/mcp.json`. Open the repo folder in VS Code an
 
 Set your license key in one of:
 - VS Code setting: `biztalkMigrate.licenseKey`
-- Shell environment: `export BIZTALK_LICENSE_KEY="your-key"` (add to `~/.zshrc` or `~/.bashrc`)
+- Shell environment: `export BTLA_LICENSE_KEY="your-key"` (add to `~/.zshrc` or `~/.bashrc`)
 - `.env` file in the project root (not committed)
 
 ---
@@ -1287,7 +1287,7 @@ Ask Claude to run any validation explicitly:
 
 **"License validation failed" — running in free tier**
 
-Check that `BIZTALK_LICENSE_KEY` is set in the MCP server config. Free tier covers Stage 1 and Stage 2 only. Stage 3 (generate workflow.json) requires Standard or above.
+Check that `BTLA_LICENSE_KEY` is set in the MCP server config. Free tier covers Stage 1 and Stage 2 only. Stage 3 (generate workflow.json) requires Standard or above.
 
 **"Unknown tool: construct_intent" or similar**
 

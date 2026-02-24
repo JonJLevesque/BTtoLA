@@ -19,7 +19,7 @@
  *   biztalk-migrate templates --search "sftp"
  *
  * License:
- *   Set BIZTALK_LICENSE_KEY env var or pass --license <key>
+ *   Set BTLA_LICENSE_KEY env var or pass --license <key>
  */
 
 import { Command }        from 'commander';
@@ -53,12 +53,12 @@ program
   .name('biztalk-migrate')
   .description('BizTalk Server → Azure Logic Apps Standard migration tool')
   .version('0.1.0')
-  .option('--license <key>', 'License key (overrides BIZTALK_LICENSE_KEY env var)')
+  .option('--license <key>', 'License key (overrides BTLA_LICENSE_KEY env var)')
   .hook('preAction', async (cmd) => {
     if (process.env['BTLA_DEV_MODE'] === 'true') {
       console.log(chalk.magenta('⚡ Dev mode active — all features unlocked'));
     }
-    const key = cmd.opts()['license'] ?? process.env['BIZTALK_LICENSE_KEY'];
+    const key = cmd.opts()['license'] ?? process.env['BTLA_LICENSE_KEY'];
     if (key) {
       try {
         const v = await validateLicense(String(key));

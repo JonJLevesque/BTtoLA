@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Base URL:** `https://api.biztalk-migrate.com/v1`
-**Auth:** Bearer token (BIZTALK_LICENSE_KEY)
+**Auth:** Bearer token (BTLA_LICENSE_KEY)
 **Privacy:** Request bodies contain structural metadata only — NO raw BizTalk XML is ever sent. No content logging.
 
 ---
@@ -12,7 +12,7 @@
 All endpoints require a valid license key in the `Authorization` header:
 
 ```
-Authorization: Bearer <BIZTALK_LICENSE_KEY>
+Authorization: Bearer <BTLA_LICENSE_KEY>
 ```
 
 Requests without a valid key return `401 Unauthorized`.
@@ -148,8 +148,8 @@ The client automatically selects its mode based on environment variables:
 ```
 BTLA_DEV_MODE=true         → dev mode (no API calls, instant response)
 ANTHROPIC_API_KEY=sk-...   → direct mode (Anthropic API, model: claude-sonnet-4-6)
-BIZTALK_LICENSE_KEY=...    → proxy mode (default for production deployments)
-BIZTALK_PROXY_URL=...      → override proxy URL (default: https://api.biztalk-migrate.com/v1)
+BTLA_LICENSE_KEY=...    → proxy mode (default for production deployments)
+BTLA_PROXY_URL=...      → override proxy URL (default: https://api.biztalk-migrate.com/v1)
 ```
 
 ---

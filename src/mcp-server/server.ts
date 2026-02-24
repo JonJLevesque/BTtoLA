@@ -19,7 +19,7 @@
  *         "command": "node",
  *         "args": ["/path/to/dist/mcp-server/server.js"],
  *         "env": {
- *           "BIZTALK_LICENSE_KEY": "your-license-key"
+ *           "BTLA_LICENSE_KEY": "your-license-key"
  *         }
  *       }
  *     }
@@ -67,7 +67,7 @@ const SERVER_CAPABILITIES = {
 async function main() {
   // Validate license on startup (non-fatal — server runs in limited mode if invalid)
   let licenseTier: 'free' | 'standard' | 'premium' = 'free';
-  const licenseKey = process.env['BIZTALK_LICENSE_KEY'];
+  const licenseKey = process.env['BTLA_LICENSE_KEY'];
 
   if (licenseKey) {
     try {
@@ -82,7 +82,7 @@ async function main() {
       console.error('[biztalk-migrate] License check skipped (offline mode). Running in free tier.');
     }
   } else {
-    console.error('[biztalk-migrate] No BIZTALK_LICENSE_KEY set. Running in free tier (understand + document only).');
+    console.error('[biztalk-migrate] No BTLA_LICENSE_KEY set. Running in free tier (understand + document only).');
   }
 
   // Create MCP server

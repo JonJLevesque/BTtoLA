@@ -5,7 +5,7 @@
       "command": "node",
       "args": ["${workspaceFolder}/dist/mcp-server/server.js"],
       "env": {
-        "BIZTALK_LICENSE_KEY": "${env:BIZTALK_LICENSE_KEY}"
+        "BTLA_LICENSE_KEY": "${env:BTLA_LICENSE_KEY}"
       }
     }
   }

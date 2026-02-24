@@ -2,7 +2,7 @@
  * Claude Client — Dual-mode AI enrichment for the migration runner.
  *
  * Proxy mode (default):
- *   POSTs to a proxy endpoint authenticated with BIZTALK_LICENSE_KEY.
+ *   POSTs to a proxy endpoint authenticated with BTLA_LICENSE_KEY.
  *   System prompt (CLAUDE.md domain knowledge) lives on the server.
  *   Raw BizTalk XML never leaves the machine — only structural metadata is sent.
  *
@@ -41,9 +41,9 @@ export class ClaudeClient {
       this.apiKey = process.env['ANTHROPIC_API_KEY'];
     } else {
       this.mode = 'proxy';
-      this.licenseKey = process.env['BIZTALK_LICENSE_KEY'];
+      this.licenseKey = process.env['BTLA_LICENSE_KEY'];
     }
-    this.proxyUrl = process.env['BIZTALK_PROXY_URL'] ?? DEFAULT_PROXY_URL;
+    this.proxyUrl = process.env['BTLA_PROXY_URL'] ?? DEFAULT_PROXY_URL;
   }
 
   get clientMode(): 'proxy' | 'direct' | 'dev' {
@@ -148,7 +148,7 @@ export class ClaudeClient {
   private async callProxy(path: string, body: Record<string, unknown>): Promise<string> {
     if (!this.licenseKey) {
       throw new Error(
-        'No license key configured. Set BIZTALK_LICENSE_KEY env var or pass --license.'
+        'No license key configured. Set BTLA_LICENSE_KEY env var or pass --license.'
       );
     }
 

@@ -4,7 +4,7 @@
 # the GitHub Actions UI or via the GitHub CLI without any local tooling.
 #
 # Required secrets:
-#   BIZTALK_LICENSE_KEY   — License key for the migration service
+#   BTLA_LICENSE_KEY   — License key for the migration service
 # Optional secrets:
 #   ANTHROPIC_API_KEY     — For direct Claude enrichment (bypasses proxy)
 #
@@ -56,7 +56,7 @@ jobs:
 
       - name: Run migration pipeline
         env:
-          BIZTALK_LICENSE_KEY: ${{ secrets.BIZTALK_LICENSE_KEY }}
+          BTLA_LICENSE_KEY: ${{ secrets.BTLA_LICENSE_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ARTIFACT_DIR: ${{ github.event.inputs.artifact_dir }}
           APP_NAME: ${{ github.event.inputs.app_name }}
