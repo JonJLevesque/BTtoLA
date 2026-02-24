@@ -1,7 +1,7 @@
 {
   "name": "biztalk-migrate",
   "displayName": "BizTalk to Logic Apps",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Migrate BizTalk Server applications to Azure Logic Apps Standard — CLI, MCP server, and VS Code extension",
   "author": "Jon Levesque <me@jonlevesque.com>",
   "publisher": "biztalk-migrate",
@@ -130,7 +130,10 @@
         },
         "biztalkMigrate.workflowKind": {
           "type": "string",
-          "enum": ["Stateful", "Stateless"],
+          "enum": [
+            "Stateful",
+            "Stateless"
+          ],
           "enumDescriptions": [
             "Recommended for BizTalk migrations. Supports long-running transactions, message correlation, and run history.",
             "For short-lived, high-throughput workflows only. No run history persistence."
@@ -144,7 +147,11 @@
     "languages": [
       {
         "id": "xml",
-        "extensions": [".odx", ".btm", ".btp"]
+        "extensions": [
+          ".odx",
+          ".btm",
+          ".btp"
+        ]
       }
     ],
     "menus": {
@@ -200,13 +207,23 @@
   "jest": {
     "preset": "ts-jest/presets/default-esm",
     "testEnvironment": "node",
-    "extensionsToTreatAsEsm": [".ts"],
+    "extensionsToTreatAsEsm": [
+      ".ts"
+    ],
     "moduleNameMapper": {
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "transform": {
-      "^.+\\.tsx?$": ["ts-jest", { "useESM": true }]
+      "^.+\\.tsx?$": [
+        "ts-jest",
+        {
+          "useESM": true
+        }
+      ]
     },
-    "testMatch": ["**/tests/**/*.test.ts", "**/*.test.ts"]
+    "testMatch": [
+      "**/tests/**/*.test.ts",
+      "**/*.test.ts"
+    ]
   }
 }
