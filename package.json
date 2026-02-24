@@ -9,7 +9,7 @@
   "homepage": "https://biztalkmigrate.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/JonJLevesque/BTtoLA.git"
+    "url": "git+https://github.com/JonJLevesque/BTtoLA.git"
   },
   "bugs": {
     "url": "https://github.com/JonJLevesque/BTtoLA/issues",
@@ -40,7 +40,7 @@
   },
   "main": "./dist/vscode/extension.js",
   "bin": {
-    "biztalk-migrate": "./dist/cli/index.js"
+    "biztalk-migrate": "dist/cli/index.js"
   },
   "exports": {
     ".": "./dist/cli/index.js",
