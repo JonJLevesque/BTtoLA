@@ -37,8 +37,14 @@ const app = new Hono<AppEnv>();
 
 // ── CORS — allow biztalkmigrate.com for public routes ─────────────────────────
 
-app.use('/v1/license/*', cors({ origin: ['https://biztalkmigrate.com', 'http://localhost:3000'] }));
-app.use('/v1/waitlist',  cors({ origin: ['https://biztalkmigrate.com', 'http://localhost:3000'] }));
+const ALLOWED_ORIGINS = [
+  'https://biztalkmigrate.com',
+  'https://biztalkmigrate.pages.dev',
+  'http://localhost:3000',
+];
+
+app.use('/v1/license/*', cors({ origin: ALLOWED_ORIGINS }));
+app.use('/v1/waitlist',  cors({ origin: ALLOWED_ORIGINS }));
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
