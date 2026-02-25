@@ -134,9 +134,10 @@ export class LicenseValidator {
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'biztalk-to-logicapps/0.1.0',
+          // Proxy auth middleware expects the key as Bearer token
+          'Authorization': `Bearer ${licenseKey}`,
         },
         body: JSON.stringify({
-          key: licenseKey,
           // Machine fingerprint helps detect key sharing — not PII, just entropy
           machineId: await getMachineFingerprint(),
         }),
