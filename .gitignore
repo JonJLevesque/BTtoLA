@@ -45,3 +45,27 @@ COPILOT.local.md
 
 # Proxy local dev secrets
 proxy/.dev.vars
+
+# ── Sample & reference directories ─────────────────────────
+# These contain real Azure secrets and/or 100+ MB of proprietary artifacts
+Sample BizTalk Old SDK/
+Sample LogicApps/
+Samples Sandro/
+
+# ── Internal planning & methodology docs ───────────────────
+# Core IP — business model, migration methodology, detailed reference mappings
+MIGRATION-PLAN.md
+docs/reference/
+docs/proxy-api-spec.md
+
+# ── Proxy server ──────────────────────────────────────────
+# Keep secrets out; track everything else
+proxy/.dev.vars
+
+# ── Marketing site (separate deployment concern) ───────────
+site/
+
+# ── Local dev / tool state ─────────────────────────────────
+.wrangler/
+.playwright-mcp/
+.claude/
