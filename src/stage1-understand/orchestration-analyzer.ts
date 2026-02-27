@@ -648,6 +648,14 @@ function parseMetaModelShape(el: Record<string, unknown>, type: string): OdxShap
       break;
     }
 
+    case 'GroupShape': {
+      // DecisionBranch (normalized to GroupShape) carries the per-branch condition expression.
+      // Extract it so Switch cases have actual values rather than TODO_CLAUDE markers.
+      const exprProp = props['Expression'] ?? '';
+      if (exprProp) shape.conditionExpression = exprProp;
+      break;
+    }
+
     case 'ExpressionShape':
     case 'MessageAssignmentShape': {
       const exprProp = props['Expression'] ?? '';

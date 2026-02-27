@@ -50,6 +50,7 @@ import type {
   SetVariableAction,
   WorkflowAction,
   TransformAction,
+  InvokeFunctionAction,
   RetryPolicy,
 } from '../types/logicapps.js';
 
@@ -644,15 +645,103 @@ function buildLoopAction(
   }
 
   // Until (BizTalk LoopShape — condition inverted)
+  const rawExpr = lc?.untilExpression ?? (cfg['untilExpression'] as string);
+  const resolvedExpr = rawExpr?.startsWith('TODO_CLAUDE_INVERT:')
+    ? (invertXlangCondition(rawExpr.replace(/^TODO_CLAUDE_INVERT:\s*/, '')) ?? rawExpr)
+    : rawExpr ?? '@equals(1, 1)';
+
   return {
     type:       'Until',
-    expression: lc?.untilExpression ?? (cfg['untilExpression'] as string) ?? '@equals(1, 1)',
+    expression: resolvedExpr,
     limit:      { count: 60, timeout: 'PT1H' },
     actions:    step.branches?.trueBranch
       ? buildActions(step.branches.trueBranch, nameMap)
       : {},
     runAfter,
   } satisfies UntilAction;
+}
+
+/**
+ * Inverts a simple XLANG/s binary condition for use in a WDL Until expression.
+ * BizTalk: while(cond) → Logic Apps: Until(!cond)
+ * Returns the inverted WDL JSON predicate string, or null if unparseable.
+ *
+ * Inversion table:
+ *   ==  → not(equals)        !=  → equals
+ *   >   → lessOrEquals       >=  → less
+ *   <   → greaterOrEquals    <=  → greater
+ */
+function invertXlangCondition(expr: string): string | null {
+  const trimmed = expr.trim();
+
+  // Try compound: &&
+  if (trimmed.includes('&&')) {
+    const parts = splitTopLevel(trimmed, '&&');
+    if (parts) {
+      const inverted = parts.map(p => invertXlangCondition(p.trim())).filter(Boolean);
+      if (inverted.length === parts.length) {
+        // De Morgan: NOT(A && B) = NOT(A) || NOT(B)
+        return `@{json('{\"or\":[${inverted.map(i => i as string).join(',')}]}')}`;
+      }
+    }
+  }
+
+  // Try compound: ||
+  if (trimmed.includes('||')) {
+    const parts = splitTopLevel(trimmed, '||');
+    if (parts) {
+      const inverted = parts.map(p => invertXlangCondition(p.trim())).filter(Boolean);
+      if (inverted.length === parts.length) {
+        // De Morgan: NOT(A || B) = NOT(A) && NOT(B)
+        return `@{json('{\"and\":[${inverted.map(i => i as string).join(',')}]}')}`;
+      }
+    }
+  }
+
+  // Try simple binary comparison
+  const OPS: [string, string][] = [
+    ['>=', 'less'], ['<=', 'greater'], ['==', 'not_equals'],
+    ['!=', 'equals'], ['>', 'lessOrEquals'], ['<', 'greaterOrEquals'],
+  ];
+
+  for (const [op, wdlFn] of OPS) {
+    const idx = trimmed.indexOf(op);
+    if (idx < 0) continue;
+    const lhs = trimmed.slice(0, idx).trim();
+    const rhs = trimmed.slice(idx + op.length).trim();
+    if (!lhs || !rhs) continue;
+
+    const wdlLhs = `@{${lhs}}`;
+    const wdlRhs = isNumeric(rhs) ? Number(rhs) : rhs.replace(/^["']|["']$/g, '');
+
+    if (wdlFn === 'not_equals') {
+      return `@{json('{\"not\":{\"equals\":[\"${wdlLhs}\",\"${wdlRhs}\"]}}')}`;
+    }
+    return `@{json('{\"${wdlFn}\":[\"${wdlLhs}\",${JSON.stringify(wdlRhs)}]}')}`;
+  }
+
+  return null;
+}
+
+function isNumeric(s: string): boolean {
+  return !isNaN(Number(s));
+}
+
+function splitTopLevel(expr: string, op: string): string[] | null {
+  const parts: string[] = [];
+  let depth = 0;
+  let last = 0;
+  for (let i = 0; i < expr.length - op.length + 1; i++) {
+    if (expr[i] === '(') { depth++; continue; }
+    if (expr[i] === ')') { depth--; continue; }
+    if (depth === 0 && expr.startsWith(op, i)) {
+      parts.push(expr.slice(last, i));
+      last = i + op.length;
+      i += op.length - 1;
+    }
+  }
+  parts.push(expr.slice(last));
+  return parts.length > 1 ? parts : null;
 }
 
 function buildAggregateAction(
@@ -714,15 +803,19 @@ function buildInvokeChildAction(step: IntegrationStep, runAfter: RunAfterMap): W
   };
 }
 
-function buildInvokeFunctionAction(step: IntegrationStep, runAfter: RunAfterMap): HttpAction {
+function buildInvokeFunctionAction(step: IntegrationStep, runAfter: RunAfterMap): InvokeFunctionAction {
   const cfg = step.config as Record<string, unknown>;
+  // Derive function name from config, step id, or a default.
+  const functionName = (cfg['functionName'] as string)
+    ?? step.id.replace(/^step_/, '').replace(/[^A-Za-z0-9_]/g, '_')
+    ?? 'CustomFunction';
   return {
-    type: 'Http',
+    type: 'InvokeFunction',
     inputs: {
-      method: 'POST',
-      uri:    (cfg['functionUrl'] as string) ?? '@parameters(\'AzureFunctionUrl\')',
-      body:   cfg['body'] ?? "@{triggerBody()}",
-      authentication: { type: 'ManagedServiceIdentity' },
+      functionName,
+      parameters: {
+        requestBody: cfg['body'] ?? '@{triggerBody()}',
+      },
     },
     runAfter,
   };

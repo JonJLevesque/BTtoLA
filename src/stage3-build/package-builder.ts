@@ -61,8 +61,10 @@ export interface BuildResult {
   localSettings:   Record<string, unknown>;
   testSpecs:       Record<string, string>;  // filename → content (JSON or .cs)
   warnings:        string[];
-  /** Absolute paths to source XSD schema files that should be copied to output Schemas/ */
+  /** Absolute paths to source XSD schema files that should be copied to output Artifacts/Schemas/ */
   schemaFiles:     string[];
+  /** Local code function .cs stubs: filename → content */
+  localCodeFunctions: Record<string, string>;
   /** Summary of what was generated */
   summary:         BuildSummary;
 }
@@ -200,10 +202,19 @@ export function buildPackage(
     );
   }
 
+  // ── 10. Generate local code function stubs ────────────────────────────────
+  const localCodeFunctions = collectLocalCodeFunctionStubs(intent, appName);
+  if (Object.keys(localCodeFunctions).length > 0) {
+    warnings.push(
+      `${Object.keys(localCodeFunctions).length} local code function stub(s) generated. ` +
+      `Implement custom logic in the .cs files before deploying.`
+    );
+  }
+
   const summary: BuildSummary = {
     workflowCount:     workflows.length,
     mapCount:          Object.keys(xsltMaps).length + Object.keys(lmlMaps).length,
-    functionStubCount: Object.keys(functionStubs).length,
+    functionStubCount: Object.keys(functionStubs).length + Object.keys(localCodeFunctions).length,
     connectionCount:
       Object.keys(connections.serviceProviderConnections).length +
       Object.keys(connections.managedApiConnections).length,
@@ -211,7 +222,7 @@ export function buildPackage(
     warnings:          warnings.length,
   };
 
-  return { project, armTemplate, armParameters, localSettings, testSpecs, warnings, schemaFiles: [], summary };
+  return { project, armTemplate, armParameters, localSettings, testSpecs, warnings, schemaFiles: [], localCodeFunctions, summary };
 }
 
 /**
@@ -275,7 +286,7 @@ export function buildPackageFromIntent(
     warnings:          0,
   };
 
-  return { project, armTemplate, armParameters, localSettings, testSpecs, warnings, schemaFiles: [], summary };
+  return { project, armTemplate, armParameters, localSettings, testSpecs, warnings, schemaFiles: [], localCodeFunctions: {}, summary };
 }
 
 // ─── Host.json Builder ────────────────────────────────────────────────────────
@@ -381,6 +392,84 @@ function buildOrchestrationIntent(
   };
 }
 
+
+/**
+ * Collects all `invoke-function` steps from the intent and generates
+ * local code function .cs stubs for Logic Apps Standard in-process execution.
+ * Returns a map of filename → C# source content.
+ */
+function collectLocalCodeFunctionStubs(
+  intent: IntegrationIntent,
+  appName: string
+): Record<string, string> {
+  const stubs: Record<string, string> = {};
+  const namespace = appName.replace(/[^A-Za-z0-9]/g, '');
+
+  const allSteps = flattenIntentSteps(intent.steps);
+  for (const step of allSteps) {
+    if (step.type !== 'invoke-function') continue;
+    const cfg = step.config as Record<string, unknown>;
+    const functionName = (cfg['functionName'] as string)
+      ?? step.id.replace(/^step_/, '').replace(/[^A-Za-z0-9_]/g, '_')
+      ?? 'CustomFunction';
+    const originalExpression = (cfg['expression'] as string) ?? '';
+    const filename = `${functionName}.cs`;
+    if (stubs[filename]) continue; // deduplicate
+
+    stubs[filename] = generateLocalCodeFunctionStub(functionName, namespace, originalExpression);
+  }
+  return stubs;
+}
+
+function generateLocalCodeFunctionStub(
+  functionName: string,
+  namespace: string,
+  originalExpression: string
+): string {
+  const exprComment = originalExpression
+    ? `        // Original BizTalk expression:\n        // ${originalExpression.split('\n').join('\n        // ')}`
+    : `        // TODO: implement transformation logic`;
+
+  return `using Microsoft.Azure.Functions.Worker;
+using Microsoft.Azure.Functions.Worker.Extensions.Abstractions;
+using Newtonsoft.Json.Linq;
+
+namespace ${namespace}.Functions
+{
+    /// <summary>
+    /// Local code function stub generated from BizTalk migration.
+    /// This function is called inline by the Logic Apps workflow.
+    /// </summary>
+    public static class ${functionName}
+    {
+        [Function("${functionName}")]
+        public static JObject Run(
+            [WorkflowActionTrigger] JObject requestBody)
+        {
+${exprComment}
+            return requestBody;
+        }
+    }
+}
+`;
+}
+
+/** Recursively flattens all steps including branch children */
+function flattenIntentSteps(steps: IntegrationIntent['steps']): IntegrationIntent['steps'] {
+  const result: IntegrationIntent['steps'] = [];
+  for (const step of steps) {
+    result.push(step);
+    if (step.branches) {
+      if (step.branches.trueBranch) result.push(...flattenIntentSteps(step.branches.trueBranch));
+      if (step.branches.falseBranch) result.push(...flattenIntentSteps(step.branches.falseBranch));
+      if (step.branches.cases) {
+        for (const c of step.branches.cases) result.push(...flattenIntentSteps(c.steps));
+      }
+      if (step.branches.defaultSteps) result.push(...flattenIntentSteps(step.branches.defaultSteps));
+    }
+  }
+  return result;
+}
 
 function sanitizeAppName(name: string): string {
   return name

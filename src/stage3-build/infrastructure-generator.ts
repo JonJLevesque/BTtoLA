@@ -113,9 +113,11 @@ export function generateLocalSettings(
   return {
     IsEncrypted: false,
     Values: {
-      AzureWebJobsStorage:      'UseDevelopmentStorage=true',
-      FUNCTIONS_WORKER_RUNTIME: 'dotnet',
-      APP_KIND:                 'workflowapp',
+      AzureWebJobsStorage:        'UseDevelopmentStorage=true',
+      FUNCTIONS_WORKER_RUNTIME:   'dotnet',
+      FUNCTIONS_EXTENSION_VERSION: '~4',
+      APP_KIND:                   'workflowapp',
+      WEBSITE_NODE_DEFAULT_VERSION: '~18',
       ...Object.fromEntries(
         Object.entries(appSettings).map(([k]) => [k, `<set-in-azure-app-settings-or-keyvault>`])
       ),

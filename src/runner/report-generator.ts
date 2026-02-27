@@ -286,10 +286,10 @@ export function generateMigrationReport(input: ReportInput): string {
   if (xsltCount + lmlCount > 0) {
     lines.push('**Maps:**');
     for (const name of Object.keys(buildResult.project.xsltMaps)) {
-      lines.push(`- \`Maps/${name}\` (XSLT)`);
+      lines.push(`- \`Artifacts/Maps/${name}\` (XSLT)`);
     }
     for (const name of Object.keys(buildResult.project.lmlMaps)) {
-      lines.push(`- \`Maps/${name}\` (Data Mapper LML)`);
+      lines.push(`- \`Artifacts/Maps/${name}\` (Data Mapper LML)`);
     }
     lines.push('');
   }
@@ -449,6 +449,29 @@ export function generateMigrationReport(input: ReportInput): string {
     }
     lines.push('');
   }
+
+  // ── Getting Started ───────────────────────────────────────────────────────────
+
+  lines.push('## Getting Started');
+  lines.push('');
+  lines.push('Open this output folder in VS Code to work with the migrated Logic Apps project:');
+  lines.push('');
+  lines.push('1. **Install the extension** — "Azure Logic Apps (Standard)" (`ms-azuretools.vscode-azurelogicapps`)');
+  lines.push('2. **Open the folder** — File → Open Folder → select this output directory');
+  lines.push('3. **The `.vscode/settings.json`** is pre-configured for Logic Apps Standard');
+  lines.push('4. **Edit connection settings** — update `local.settings.json` with your real connection strings');
+  lines.push('5. **Open a workflow in Designer** — right-click any `workflow.json` → "Open in Designer"');
+  lines.push('6. **Deploy to Azure** — use the Logic Apps extension sidebar → Deploy to Logic App');
+  lines.push('');
+  if (buildResult.localCodeFunctions && Object.keys(buildResult.localCodeFunctions).length > 0) {
+    lines.push('**Local Code Functions** — the following `.cs` stubs were generated for custom C# logic:');
+    for (const name of Object.keys(buildResult.localCodeFunctions)) {
+      lines.push(`- \`${name}\` — implement the transformation logic before deploying`);
+    }
+    lines.push('');
+  }
+  lines.push('**Maps** are in `Artifacts/Maps/` and **Schemas** are in `Artifacts/Schemas/`.');
+  lines.push('');
 
   // ── Footer ────────────────────────────────────────────────────────────────────
 

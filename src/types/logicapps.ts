@@ -248,6 +248,16 @@ export interface AppendToArrayVariableAction {
   runAfter?: RunAfterMap;
 }
 
+/** Local code function call — Logic Apps Standard in-process .NET function */
+export interface InvokeFunctionAction {
+  type: 'InvokeFunction';
+  inputs: {
+    functionName: string;
+    parameters?: Record<string, unknown>;
+  };
+  runAfter?: RunAfterMap;
+}
+
 /** Child workflow call — Logic Apps Standard only */
 export interface WorkflowAction {
   type: 'Workflow';
@@ -277,6 +287,7 @@ export interface TransformAction {
 export type WdlAction =
   | ServiceProviderAction
   | HttpAction
+  | InvokeFunctionAction
   | ComposeAction
   | ParseJsonAction
   | IfAction

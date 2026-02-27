@@ -4,13 +4,18 @@
  * Produces a Logic Apps Standard project layout:
  *
  *   {outputDir}/
+ *     .vscode/
+ *       settings.json          (Logic Apps Standard extension settings)
+ *       extensions.json        (recommended extensions)
  *     {WorkflowName}/
  *       workflow.json
- *     Maps/
- *       {MapName}.xslt
- *       {MapName}.lml
- *     AzureFunctions/
- *       {FunctionName}.csx
+ *     Artifacts/
+ *       Maps/
+ *         {MapName}.xslt
+ *         {MapName}.lml
+ *       Schemas/
+ *         {SchemaName}.xsd
+ *     {FunctionName}.cs        (local code function stubs)
  *     connections.json
  *     host.json
  *     local.settings.json
@@ -18,6 +23,7 @@
  *     arm-parameters.json      (if infrastructure included)
  *     tests/
  *       {WorkflowName}.tests.json
+ *     {AppName}.code-workspace
  *     migration-report.md
  */
 
@@ -56,7 +62,7 @@ export function writeOutput(options: WriteOptions): void {
   const hasLml  = Object.keys(buildResult.project.lmlMaps).length > 0;
 
   if (hasXslt || hasLml) {
-    const mapsDir = join(outputDir, 'Maps');
+    const mapsDir = join(outputDir, 'Artifacts', 'Maps');
     ensureDir(mapsDir);
     for (const [name, content] of Object.entries(buildResult.project.xsltMaps)) {
       writeFileSync(join(mapsDir, name), content, 'utf-8');
@@ -83,7 +89,7 @@ export function writeOutput(options: WriteOptions): void {
 
   // ── XSD Schemas ─────────────────────────────────────────────────────────────
   if (buildResult.schemaFiles && buildResult.schemaFiles.length > 0) {
-    const schemasDir = join(outputDir, 'Schemas');
+    const schemasDir = join(outputDir, 'Artifacts', 'Schemas');
     ensureDir(schemasDir);
     for (const schemaPath of buildResult.schemaFiles) {
       try {
@@ -94,17 +100,33 @@ export function writeOutput(options: WriteOptions): void {
     }
   }
 
+  // ── Local code function stubs ────────────────────────────────────────────────
+  if (buildResult.localCodeFunctions && Object.keys(buildResult.localCodeFunctions).length > 0) {
+    for (const [name, content] of Object.entries(buildResult.localCodeFunctions)) {
+      writeFileSync(join(outputDir, name), content, 'utf-8');
+    }
+  }
+
+  // ── .vscode/ settings ────────────────────────────────────────────────────────
+  const vscodeDir = join(outputDir, '.vscode');
+  ensureDir(vscodeDir);
+  writeJson(join(vscodeDir, 'settings.json'), {
+    'azureFunctions.deploySubpath':                        '.',
+    'azureFunctions.suppressProject':                      true,
+    'azureLogicAppsStandard.autoRuntimeDependenciesValidation': true,
+    'azureLogicAppsStandard.showAutoTriggerKey':            true,
+    'azureFunctions.projectLanguage':                      'Custom',
+  });
+  writeJson(join(vscodeDir, 'extensions.json'), {
+    recommendations: ['ms-azuretools.vscode-azurelogicapps'],
+  });
+
   // ── VS Code workspace file ───────────────────────────────────────────────────
   const appName = buildResult.project.appName;
   const workspace = {
     folders: [{ path: '.' }],
     settings: {
       'azureLogicAppsStandard.showAutoTriggerKey': true,
-    },
-    extensions: {
-      recommendations: [
-        'ms-azuretools.vscode-azurelogicapps',
-      ],
     },
   };
   writeJson(join(outputDir, `${appName}.code-workspace`), workspace);
