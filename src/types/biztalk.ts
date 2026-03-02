@@ -133,6 +133,13 @@ export interface BtmFunctoid {
   isScripting: boolean;
   /** For scripting functoids: the inline C# source code */
   scriptCode?: string;
+  /**
+   * For scripting functoids: the scripting language declared in <Script Language='...'>
+   * - 'xslt' / 'xslt-call-template': Inline XSLT — translates directly, no Local Code Function needed
+   * - 'csharp' / 'vbnet' / 'jscript': generates userCSharp: calls — requires Local Code Function
+   * - 'external-assembly': compiled DLL reference — requires Local Code Function
+   */
+  scriptLanguage?: 'csharp' | 'vbnet' | 'jscript' | 'xslt' | 'external-assembly';
   /** For database functoids: the connection info (sanitized — no credentials) */
   databaseTableRef?: string;
   inputs: string[];
@@ -145,11 +152,36 @@ export interface BtmLink {
   functoidRef?: number;
 }
 
+/**
+ * Map-level properties extracted from the <mapsource> element in .btm XML.
+ * These affect migration correctness and must be checked during conversion.
+ */
+export interface MapProperties {
+  /**
+   * BizTalk default: true. When true, the BizTalk compiler auto-emits schema default/fixed
+   * values for destination elements not explicitly mapped. The Logic Apps Integration Account
+   * XSLT engine does NOT apply schema defaults automatically — maps relying on this will
+   * produce incomplete output.
+   */
+  generateDefaultFixedNodes?: boolean;
+  /**
+   * When false, sibling elements of different types may reorder. Compiled XSLT uses union
+   * selectors (TypeA | TypeB) which preserves document order; two xsl:for-each blocks do not.
+   */
+  preserveSequenceOrder?: boolean;
+  treatElementsAsRecords?: boolean;
+  /** Output method. 'text' means Transform action returns a raw string, not XML. */
+  method?: 'xml' | 'text' | 'html';
+  copyPIs?: boolean;
+}
+
 export interface ParsedMap {
   name: string;
   className: string;
   filePath: string;
   sourceSchemaRef: string;
+  /** Additional source schema refs for multi-part maps (multiple <SrcTree> in .btm) */
+  additionalSourceSchemaRefs?: string[];
   destinationSchemaRef: string;
   functoids: BtmFunctoid[];
   links: BtmLink[];
@@ -163,6 +195,10 @@ export interface ParsedMap {
   functoidCategories: FunctoidCategory[];
   /** Recommended migration path determined by map-analyzer */
   recommendedMigrationPath?: 'lml' | 'xslt' | 'xslt-rewrite' | 'azure-function' | 'manual';
+  /** Map-level properties from <mapsource> element (affects migration correctness) */
+  mapProperties?: MapProperties;
+  /** Raw extracted XSLT content if available (for deep pattern analysis: userCSharp:, count(/...), xsl:sort) */
+  xsltContent?: string;
 }
 
 // ─── Pipeline (.btp) ─────────────────────────────────────────────────────────

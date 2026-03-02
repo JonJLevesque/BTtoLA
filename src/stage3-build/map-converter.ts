@@ -50,6 +50,8 @@ export function convertMap(map: ParsedMap): ConvertedMap {
       };
 
     case 'xslt':
+      // EMAP-04: Check map properties that affect migration correctness
+      addMapPropertyWarnings(map, warnings);
       return {
         name:     map.name,
         format:   'xslt',
@@ -58,6 +60,8 @@ export function convertMap(map: ParsedMap): ConvertedMap {
       };
 
     case 'xslt-rewrite':
+      // EMAP-04: Check map properties that affect migration correctness
+      addMapPropertyWarnings(map, warnings);
       warnings.push(
         `Map "${map.name}" contains ${map.functoids.filter(f => f.isScripting).length} ` +
         `scripting functoid(s). These have been replaced with TODO placeholders in the XSLT. ` +
@@ -73,7 +77,7 @@ export function convertMap(map: ParsedMap): ConvertedMap {
     case 'azure-function':
       warnings.push(
         `Map "${map.name}" uses C# scripting or database functoids that cannot be expressed ` +
-        `in XSLT. An Azure Function stub has been generated. Port the business logic from ` +
+        `in XSLT. A Local Code Function stub has been generated. Port the business logic from ` +
         `the scripting functoids into the function implementation.`
       );
       return {
@@ -95,6 +99,35 @@ export function convertMap(map: ParsedMap): ConvertedMap {
         content:  generateXsltScaffold(map),
         warnings,
       };
+  }
+}
+
+/**
+ * EMAP-04: Checks map-level properties and adds warnings for known migration issues.
+ * Called before generating XSLT for any map.
+ */
+function addMapPropertyWarnings(map: ParsedMap, warnings: string[]): void {
+  if (map.mapProperties?.generateDefaultFixedNodes) {
+    warnings.push(
+      `Map "${map.name}" uses GenerateDefaultFixedNodes=Yes: schema default values were ` +
+      `auto-emitted by the BizTalk compiler. Logic Apps Integration Account XSLT engine does ` +
+      `not apply schema defaults automatically. Review the destination schema for elements with ` +
+      `default= or fixed= attributes and add explicit xsl:otherwise fallbacks.`
+    );
+  }
+  if (map.mapProperties?.method === 'text') {
+    warnings.push(
+      `Map "${map.name}" uses Method=Text: the Transform action output is a raw string, ` +
+      `not XML. Downstream workflow actions must handle the output as text content, ` +
+      `not as an XML body.`
+    );
+  }
+  if (map.mapProperties?.preserveSequenceOrder === false) {
+    warnings.push(
+      `Map "${map.name}" has PreserveSequenceOrder=No: sibling type union patterns ` +
+      `(TypeA | TypeB in compiled XSLT) may produce different element ordering when ` +
+      `replaced with separate xsl:for-each blocks. Review generated XSLT for union selectors.`
+    );
   }
 }
 
@@ -184,17 +217,16 @@ function generateXslt(
     `-->`,
     `<xsl:stylesheet version="1.0"`,
     `  xmlns:xsl="http://www.w3.org/1999/XSL/Transform"`,
-    `  xmlns:xs="http://www.w3.org/2001/XMLSchema"`,
     sourceNs ? `  xmlns:src="${sourceNs}"` : `  xmlns:src="urn:source"`,
     destNs   ? `  xmlns:dest="${destNs}"` : `  xmlns:dest="urn:destination"`,
-    `  exclude-result-prefixes="xs src">`,
+    `  exclude-result-prefixes="src">`,
     ``,
     `  <xsl:output method="xml" indent="yes" encoding="utf-8"/>`,
     ``,
     `  <!-- ═══ Main Template ══════════════════════════════════════════════════ -->`,
     `  <xsl:template match="/">`,
     `    <${destRoot}>`,
-    ...buildXsltRootMappings(map),
+    ...buildXsltRootMappings(map, warnings),
     `    </${destRoot}>`,
     `  </xsl:template>`,
     ``,
@@ -204,14 +236,30 @@ function generateXslt(
   ].join('\n');
 }
 
-function buildXsltRootMappings(map: ParsedMap): string[] {
+// EMAP-03: Strip namespace prefix from each path segment before wrapping in local-name().
+// BTM link refs often include schema namespace prefixes (e.g. s0:Order/s0:OrderID) —
+// after splitting, the segment is 's0:OrderID' and local-name()='s0:OrderID' never matches.
+function buildXsltRootMappings(map: ParsedMap, warnings: string[]): string[] {
   const lines: string[] = [];
   const directLinks = map.links.filter(l => !l.functoidRef);
 
+  // Warn when namespace-prefixed link refs are detected (EMAP-03)
+  const hasNsPrefixes = directLinks.some(l => l.from.includes(':') || l.to.includes(':'));
+  if (hasNsPrefixes) {
+    warnings.push(
+      `Map "${map.name}" has namespace-prefixed link references (e.g. s0:Field). ` +
+      `Namespace prefixes are stripped — local-name() predicate is used for element selection. ` +
+      `For full namespace-aware XPath, declare the destination schema namespace URI in the ` +
+      `stylesheet header (see sandro-ebook-map-patterns.md Section 6.1).`
+    );
+  }
+
   for (const link of directLinks) {
     const src  = xpathFromRef(link.from);
-    const dest = link.to.split('/').pop() ?? link.to;
-    lines.push(`      <${dest}><xsl:value-of select="${src}"/></${dest}>`);
+    // Strip namespace prefix from destination element name too
+    const destFull  = link.to.split('/').pop() ?? link.to;
+    const destLocal = destFull.includes(':') ? destFull.split(':')[1]! : destFull;
+    lines.push(`      <${destLocal}><xsl:value-of select="${src}"/></${destLocal}>`);
   }
 
   if (lines.length === 0) {
@@ -229,23 +277,30 @@ function buildXsltTemplates(
   const blocks: string[] = [];
 
   for (const functoid of map.functoids) {
-    const block = functoidToXsltTemplate(functoid, includeTodos);
+    const block = functoidToXsltTemplate(functoid, includeTodos, warnings);
     if (block) blocks.push(block);
   }
 
   return blocks;
 }
 
+// EMAP-01: Check f.scriptCode for userCSharp: to catch functoids not flagged by parser.
+// Also pass warnings[] so logical/date-time categories can note their scaffold status.
 function functoidToXsltTemplate(
   f: BtmFunctoid,
-  includeTodos: boolean
+  includeTodos: boolean,
+  warnings: string[]
 ): string | null {
-  if (f.isScripting) {
+  // Detect userCSharp: extension calls in scriptCode even if isScripting wasn't set by parser
+  const hasUserCSharp = !f.isScripting && (f.scriptCode?.includes('userCSharp:') ?? false);
+
+  if (f.isScripting || hasUserCSharp) {
     if (includeTodos) {
       return [
         `  <!-- ─── Scripting Functoid ${f.functoidId} ──────────────────────────────────── -->`,
         `  <!-- TODO: Replace this placeholder with a standard XSLT template.           -->`,
-        `  <!-- Original C# script code is NOT compatible with Logic Apps XSLT action. -->`,
+        `  <!-- userCSharp: extension calls are NOT compatible with Logic Apps XSLT.    -->`,
+        `  <!-- Port logic to a Local Code Function or rewrite as XSLT templates.       -->`,
         `  <!-- Inputs:  ${f.inputs.join(', ')} -->`,
         `  <!-- Outputs: ${f.outputs.join(', ')} -->`,
         `  <xsl:template name="functoid_${f.functoidId}">`,
@@ -265,8 +320,20 @@ function functoidToXsltTemplate(
     case 'math':
       return buildMathFunctoidTemplate(f);
     case 'logical':
+      // EMAP-01: Warn that this is a scaffold — logical template must be completed manually
+      warnings.push(
+        `Functoid ${f.functoidId} (logical): the generated xsl:choose template is a structural ` +
+        `scaffold. Implement the correct XPath condition logic — ` +
+        `see sandro-ebook-map-patterns.md Section 9.`
+      );
       return buildLogicalFunctoidTemplate(f);
     case 'date-time':
+      // EMAP-01: Warn that XSLT 1.0 has limited date/time support
+      warnings.push(
+        `Functoid ${f.functoidId} (date-time): the generated template is a structural scaffold. ` +
+        `XSLT 1.0 has limited built-in date/time support — implement the date operation explicitly ` +
+        `or consider a Local Code Function for complex date logic.`
+      );
       return buildDateTimeFunctoidTemplate(f);
     default:
       return [
@@ -354,11 +421,15 @@ function generateXsltScaffold(map: ParsedMap): string {
   ].join('\n');
 }
 
-// ─── Azure Function Stub ──────────────────────────────────────────────────────
+// ─── Local Code Function Stub ─────────────────────────────────────────────────
 
 /**
- * Generates a C# Azure Function stub for maps that use scripting/database functoids.
- * The consultant implements the business logic in the stub.
+ * EMAP-02: Generates a C# Local Code Function stub for maps that use scripting/database
+ * functoids. Uses the Logic Apps Standard [WorkflowActionTrigger] pattern — not the legacy
+ * Azure Functions v1 HTTP trigger pattern.
+ *
+ * Place the generated file in the lib/custom/ folder of the Logic Apps Standard project.
+ * Invoke it from the workflow via the Execute Code Function action.
  */
 function generateFunctionStub(map: ParsedMap): string {
   const functionName = sanitizeCSharpName(map.name);
@@ -368,74 +439,58 @@ function generateFunctionStub(map: ParsedMap): string {
   const methodComments: string[] = [];
 
   for (const f of scriptingFunctoids) {
-    methodComments.push(`    // Scripting Functoid ${f.functoidId}:`);
+    methodComments.push(`        // Scripting Functoid ${f.functoidId} (${f.scriptLanguage ?? 'unknown language'}):`);
     if (f.scriptCode) {
-      const codeLines = f.scriptCode.split('\n').slice(0, 10).map(l => `    // ${l}`);
+      const codeLines = f.scriptCode.split('\n').slice(0, 10).map(l => `        // ${l}`);
       methodComments.push(...codeLines);
       if (f.scriptCode.split('\n').length > 10) {
-        methodComments.push(`    // ... (${f.scriptCode.split('\n').length - 10} more lines)`);
+        methodComments.push(`        // ... (${f.scriptCode.split('\n').length - 10} more lines)`);
       }
     }
     methodComments.push('');
   }
 
   for (const f of dbFunctoids) {
-    methodComments.push(`    // Database Functoid ${f.functoidId}:`);
+    methodComments.push(`        // Database Functoid ${f.functoidId}:`);
     if (f.databaseTableRef) {
-      methodComments.push(`    // Reference: ${f.databaseTableRef}`);
+      methodComments.push(`        // Reference: ${f.databaseTableRef}`);
     }
-    methodComments.push(`    // TODO: Implement SQL lookup using Azure SQL connector or EF Core`);
+    methodComments.push(`        // TODO: Implement SQL lookup — use Azure SQL connector in workflow or EF Core here`);
     methodComments.push('');
   }
 
   return [
     `using System;`,
-    `using System.IO;`,
-    `using System.Threading.Tasks;`,
-    `using System.Xml;`,
     `using System.Xml.Linq;`,
-    `using Microsoft.AspNetCore.Mvc;`,
-    `using Microsoft.Azure.WebJobs;`,
-    `using Microsoft.Azure.WebJobs.Extensions.Http;`,
-    `using Microsoft.AspNetCore.Http;`,
+    `using Microsoft.Azure.Workflows.WebJobs.Attributes;`,
     `using Microsoft.Extensions.Logging;`,
-    `using Newtonsoft.Json;`,
     ``,
     `/// <summary>`,
-    `/// Azure Function replacement for BizTalk map: ${map.name}`,
+    `/// Local Code Function replacement for BizTalk map: ${map.name}`,
     `/// Source schema:      ${map.sourceSchemaRef}`,
     `/// Destination schema: ${map.destinationSchemaRef}`,
     `/// Migrated from: ${map.filePath}`,
     `/// Generated: ${new Date().toISOString()}`,
+    `///`,
+    `/// Deploy: place this file in the lib/custom/ folder of the Logic Apps Standard project.`,
+    `/// Invoke: use the Execute Code Function action in your workflow.`,
     `/// </summary>`,
-    `public static class ${functionName}`,
+    `public class ${functionName}`,
     `{`,
-    `    [FunctionName("${functionName}")]`,
-    `    public static async Task<IActionResult> Run(`,
-    `        [HttpTrigger(AuthorizationLevel.Function, "post", Route = null)] HttpRequest req,`,
-    `        ILogger log)`,
+    `    [WorkflowActionTrigger]`,
+    `    public static string Run(string inputXml, ILogger log)`,
     `    {`,
-    `        log.LogInformation("${functionName} map function processing request.");`,
+    `        log.LogInformation("${functionName}: processing XML transformation.");`,
     ``,
-    `        string requestBody = await new StreamReader(req.Body).ReadToEndAsync();`,
-    `        XDocument sourceDoc;`,
-    `        try`,
-    `        {`,
-    `            sourceDoc = XDocument.Parse(requestBody);`,
-    `        }`,
-    `        catch (XmlException ex)`,
-    `        {`,
-    `            return new BadRequestObjectResult($"Invalid XML: {ex.Message}");`,
-    `        }`,
-    ``,
-    `        // ═══ Original BizTalk map logic ═══════════════════════════════════════`,
+    `        // ═══ Original BizTalk scripting functoid logic to port ═══════════════`,
     ...methodComments,
-    `        // TODO: Implement the complete transformation logic`,
-    `        // Transform source document to target schema`,
+    `        // TODO: Implement the complete transformation logic.`,
+    `        // Parse input, apply transformations, return result XML as string.`,
+    `        var sourceDoc = XDocument.Parse(inputXml);`,
     `        var targetDoc = new XDocument();`,
     ``,
-    `        // ═══ Return transformed XML ════════════════════════════════════════════`,
-    `        return new OkObjectResult(targetDoc.ToString());`,
+    `        // ═══ Return transformed XML as string ════════════════════════════════`,
+    `        throw new NotImplementedException("Port scripting functoid logic here.");`,
     `    }`,
     `}`,
   ].join('\n');
@@ -466,9 +521,15 @@ function sanitizePath(ref: string): string {
   return ref.replace(/\\/g, '/').replace(/^\//, '');
 }
 
+// EMAP-03: Strip namespace prefix from each path segment before wrapping in local-name().
+// BTM link refs may include schema namespace prefixes: s0:Order/s0:OrderID.
+// local-name() returns the local part only — 'local-name()="s0:OrderID"' never matches.
 function xpathFromRef(ref: string): string {
   const parts = ref.split(/[/\\]/);
-  return parts.map(p => `*[local-name()='${p}']`).join('/') || '.';
+  return parts.map(p => {
+    const localName = p.includes(':') ? p.split(':')[1]! : p;
+    return `*[local-name()='${localName}']`;
+  }).join('/') || '.';
 }
 
 function sanitizeCSharpName(name: string): string {

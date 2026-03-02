@@ -159,20 +159,105 @@ const GAP_DEFS = {
     capability: 'Scripting Functoids (msxsl:script)',
     severity: 'high' as RiskSeverity,
     description:
-      'Scripting functoids compile to msxsl:script C# blocks embedded in XSLT. The Logic Apps ' +
-      'Transform XML action uses .NET XSLT without the msxsl extension — scripts will cause ' +
-      'transformation failures at runtime. Additionally, the Integration Account XSLT mapper ' +
-      'only supports .NET 2.0 C# syntax: no LINQ, no lambda expressions, no var keyword. ' +
-      'Any modern C# in scripting functoids (LINQ queries, var declarations, lambdas) will ' +
-      'fail to compile even if msxsl were supported.',
+      'BizTalk scripting functoids have two fundamentally different migration paths depending on ' +
+      'the scripting language. Inline XSLT and Inline XSLT Call Template functoids embed pure ' +
+      'XSLT and translate directly to Integration Account XSLT with no changes (LOW impact). ' +
+      'Inline C#, Inline VB.NET, Inline JScript.NET, and External Assembly functoids compile to ' +
+      'msxsl:script blocks (userCSharp: namespace). The Logic Apps Transform XML action uses ' +
+      '.NET XSLT without the msxsl extension — these will cause transformation failures at runtime. ' +
+      'Additionally, the Integration Account XSLT mapper only supports .NET 2.0 C# syntax: no ' +
+      'LINQ, no lambda expressions, no var keyword. Check the <Script Language=\'..\'> attribute ' +
+      'in the .btm XML to identify the scripting language for each functoid.',
     mitigation:
+      'First identify the scripting language of each functoid (check <Script Language=\'..\'> in ' +
+      'the .btm XML). Inline XSLT functoids: embed verbatim in the Integration Account XSLT — ' +
+      'no change needed. Inline C#/VB.NET/JScript.NET/External Assembly: ' +
       'Option A (preferred): Rewrite as standard XSLT templates using built-in XSLT string/math ' +
-      'functions (normalize-space, substring, translate). Option B: Extract the C# logic into a ' +
-      'Logic Apps Local Code Function (runs in-process, no separate service) and call it before ' +
-      'the Transform XML action — use .NET 6+ syntax freely. Option C (last resort): Azure ' +
-      'Function only if the logic requires external dependencies or shared-across-workflows reuse. ' +
-      'Each scripting functoid requires individual analysis; budget 0.5–1 day per unique script.',
+      'functions (normalize-space, substring, translate). Option B: Extract to a Logic Apps Local ' +
+      'Code Function (runs in-process, no separate service, .NET 6+ syntax). ' +
+      'Each non-XSLT scripting functoid requires individual analysis; budget 0.5–1 day per unique script.',
     baseEffortDays: 3,
+  },
+
+  scriptingFunctoidXslt: {
+    capability: 'Scripting Functoids (Inline XSLT — directly portable)',
+    severity: 'low' as RiskSeverity,
+    description:
+      'All scripting functoids in this map use Inline XSLT or Inline XSLT Call Template sub-types. ' +
+      'These functoids embed pure XSLT 1.0 and do NOT generate userCSharp: extension function calls. ' +
+      'They translate directly to the Integration Account XSLT stylesheet with no changes required.',
+    mitigation:
+      'Embed the Inline XSLT templates verbatim in the Integration Account XSLT stylesheet. ' +
+      'Validate by uploading the XSLT to an Integration Account and running a test transform. ' +
+      'No Local Code Function or Azure Function is required for this map.',
+    baseEffortDays: 0,
+  },
+
+  multiPartMap: {
+    capability: 'Multi-Part Maps (Multiple Source Schemas)',
+    severity: 'high' as RiskSeverity,
+    description:
+      'BizTalk Mapper supports maps with multiple source schemas (multiple <SrcTree> entries in ' +
+      'the .btm file). The Logic Apps Transform XML action (both Integration Account and Data ' +
+      'Mapper) accepts a single XML input document. Multi-source enrichment maps require a ' +
+      'workflow-level pre-merge step to combine all source documents before the Transform action.',
+    mitigation:
+      'Before the Transform action: (1) fetch each additional source document via SQL connector, ' +
+      'HTTP action, or variable; (2) use a Compose action to build a merged XML document combining ' +
+      'all source data under a single root element; (3) pass the merged document as the single ' +
+      'Transform input. The XSLT selects from each source using its namespace prefix. ' +
+      'Budget 1-2 days per additional source schema.',
+    baseEffortDays: 2,
+  },
+
+  recordCountAbsolutePath: {
+    capability: 'Record Count Functoid Absolute XPath',
+    severity: 'medium' as RiskSeverity,
+    description:
+      'The BizTalk Record Count Functoid compiles to an absolute XPath: count(/s0:Root/Record). ' +
+      'Inside a nested xsl:for-each, this returns the global total count for every parent — not ' +
+      'the count of children for that specific parent. This is a silent wrong-count bug in BizTalk ' +
+      'maps that use Record Count inside a nested loop. The bug replicates to Logic Apps because ' +
+      'the XSLT is preserved verbatim.',
+    mitigation:
+      'In the generated XSLT, rewrite count(/absolute/path) inside xsl:for-each blocks to use ' +
+      'relative XPath: count(Child) instead of count(/Root/Parent/Child). If the absolute path ' +
+      'cannot be rewritten without schema analysis, flag for manual review. ' +
+      'Budget 0.5 days per map containing this pattern.',
+    baseEffortDays: 1,
+  },
+
+  generateDefaultFixedNodes: {
+    capability: 'GenerateDefaultFixedNodes Schema Defaults',
+    severity: 'medium' as RiskSeverity,
+    description:
+      'When a BizTalk map has GenerateDefaultFixedNodes=Yes (the BizTalk compiler default), the ' +
+      'compiler auto-emits XSD schema default values for destination elements not explicitly mapped. ' +
+      'The Logic Apps Integration Account XSLT engine does NOT apply schema defaults automatically ' +
+      '— it only outputs what the XSLT explicitly constructs. Maps that relied on compiler-injected ' +
+      'defaults will silently produce incomplete or schema-invalid output.',
+    mitigation:
+      'Scan the destination schema XSD for elements with default= or fixed= attributes. For each, ' +
+      'add an explicit <xsl:choose><xsl:when>...</xsl:when><xsl:otherwise>{default-value}' +
+      '</xsl:otherwise></xsl:choose> pattern in the XSLT. ' +
+      'Budget 0.5-1 day per map with schema defaults.',
+    baseEffortDays: 1,
+  },
+
+  numericSortMissingDataType: {
+    capability: 'xsl:sort Missing data-type="number"',
+    severity: 'low' as RiskSeverity,
+    description:
+      'BizTalk Mapper Sorting patterns use xsl:sort. Without data-type="number", numeric fields ' +
+      'sort lexicographically (10 sorts before 2 as text). This is a silent data correctness bug ' +
+      'in maps that use sorting on numeric fields. Maps migrated verbatim to Integration Account ' +
+      'Transform will exhibit the same incorrect sort order.',
+    mitigation:
+      'Scan generated XSLT for <xsl:sort> elements that lack data-type="number" on fields with ' +
+      'numeric-sounding names (Id, Amount, Count, Total, Price, Quantity, Number, Sequence). ' +
+      'Add data-type="number" where numeric sort is intended. ' +
+      'Budget 0.25 days per map with sorting.',
+    baseEffortDays: 1,
   },
 
   databaseFunctoid: {
@@ -498,13 +583,73 @@ function orchestrationGaps(orch: ParsedOrchestration): GapHit[] {
 
 function mapGaps(map: ParsedMap): GapHit[] {
   const hits: GapHit[] = [];
+
   if (map.hasScriptingFunctoids) {
-    const count = map.functoids.filter(f => f.isScripting).length;
-    hits.push({ def: GAP_DEFS.scriptingFunctoid, effortDelta: Math.max(1, count) });
+    const scriptingFunctoids = map.functoids.filter(f => f.isScripting);
+    const count = scriptingFunctoids.length;
+
+    // EMAP-05: Distinguish Inline XSLT (directly portable, LOW) from Inline C#/VB/JScript (HIGH).
+    // An Inline XSLT functoid's scriptCode contains <xsl: elements; it does NOT generate userCSharp: calls.
+    // If scriptLanguage is set by the parser, use it; otherwise fall back to heuristic.
+    const inlineXsltFunctoids = scriptingFunctoids.filter(f =>
+      f.scriptLanguage === 'xslt' ||
+      (!f.scriptLanguage && (f.scriptCode?.includes('<xsl:') ?? false))
+    );
+    const allInlineXslt = inlineXsltFunctoids.length === count && count > 0;
+
+    if (allInlineXslt) {
+      // All Inline XSLT — directly portable to Integration Account, LOW severity
+      hits.push({ def: GAP_DEFS.scriptingFunctoidXslt, effortDelta: 0 });
+    } else {
+      // At least one Inline C#/VB/JScript/External Assembly — requires Local Code Function, HIGH severity
+      hits.push({ def: GAP_DEFS.scriptingFunctoid, effortDelta: Math.max(1, count) });
+    }
   }
+
+  // EMAP-05 secondary: catch userCSharp: in xsltContent even if parser didn't flag hasScriptingFunctoids
+  if (!map.hasScriptingFunctoids && map.xsltContent?.includes('userCSharp:')) {
+    hits.push({
+      def: {
+        capability: GAP_DEFS.scriptingFunctoid.capability,
+        severity: 'high' as RiskSeverity,
+        description:
+          GAP_DEFS.scriptingFunctoid.description +
+          ' userCSharp: extension calls detected in extracted XSLT — functoid type may not ' +
+          'have been flagged by the Stage 1 parser.',
+        mitigation: GAP_DEFS.scriptingFunctoid.mitigation,
+        baseEffortDays: GAP_DEFS.scriptingFunctoid.baseEffortDays,
+      },
+      effortDelta: 1,
+    });
+  }
+
   if (map.hasDatabaseFunctoids) {
     hits.push({ def: GAP_DEFS.databaseFunctoid, effortDelta: 1 });
   }
+
+  // EMAP-06: Multi-part map detection (multiple source schemas)
+  const additionalSourceCount = map.additionalSourceSchemaRefs?.length ?? 0;
+  if (additionalSourceCount > 0) {
+    hits.push({ def: GAP_DEFS.multiPartMap, effortDelta: additionalSourceCount });
+  }
+
+  // EGAP-03: GenerateDefaultFixedNodes — IA XSLT engine doesn't auto-apply schema defaults
+  if (map.mapProperties?.generateDefaultFixedNodes) {
+    hits.push({ def: GAP_DEFS.generateDefaultFixedNodes, effortDelta: 1 });
+  }
+
+  // EGAP-02: Record Count Functoid using absolute XPath inside nested for-each (requires xsltContent)
+  if (map.xsltContent && /count\(\//.test(map.xsltContent)) {
+    hits.push({ def: GAP_DEFS.recordCountAbsolutePath, effortDelta: 1 });
+  }
+
+  // EGAP-05: xsl:sort missing data-type="number" on what may be numeric fields (requires xsltContent)
+  if (map.xsltContent &&
+      /<xsl:sort/.test(map.xsltContent) &&
+      !/<xsl:sort[^>]*data-type="number"/.test(map.xsltContent)) {
+    hits.push({ def: GAP_DEFS.numericSortMissingDataType, effortDelta: 1 });
+  }
+
   return hits;
 }
 
