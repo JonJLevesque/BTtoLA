@@ -1,7 +1,0 @@
-{
-  "azureFunctions.deploySubpath": ".",
-  "azureFunctions.suppressProject": true,
-  "azureLogicAppsStandard.autoRuntimeDependenciesValidation": true,
-  "azureLogicAppsStandard.showAutoTriggerKey": true,
-  "azureFunctions.projectLanguage": "Custom"
-}

@@ -43,6 +43,7 @@ import { convertMap }                    from './map-converter.js';
 import { generateConnectionsFromApp, generateConnectionsFromIntent } from './connection-generator.js';
 import { generateArmTemplate, generateLocalSettings } from './infrastructure-generator.js';
 import { generateTestSpec, generateMsTestScaffold }  from './test-spec-generator.js';
+import { isComplexCSharpCall, extractMethodCallInfo } from './csharp-translator.js';
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -429,16 +430,31 @@ function collectLocalCodeFunctionStubs(
 
   const allSteps = flattenIntentSteps(intent.steps);
   for (const step of allSteps) {
-    if (step.type !== 'invoke-function') continue;
-    const cfg = step.config as Record<string, unknown>;
-    const functionName = (cfg['functionName'] as string)
-      ?? step.id.replace(/^step_/, '').replace(/[^A-Za-z0-9_]/g, '_')
-      ?? 'CustomFunction';
-    const originalExpression = (cfg['expression'] as string) ?? '';
-    const filename = `${functionName}.cs`;
-    if (stubs[filename]) continue; // deduplicate
+    if (step.type === 'invoke-function') {
+      const cfg = step.config as Record<string, unknown>;
+      const functionName = (cfg['functionName'] as string)
+        ?? step.id.replace(/^step_/, '').replace(/[^A-Za-z0-9_]/g, '_')
+        ?? 'CustomFunction';
+      const originalExpression = (cfg['expression'] as string) ?? '';
+      const filename = `${functionName}.cs`;
+      if (stubs[filename]) continue; // deduplicate
+      stubs[filename] = generateLocalCodeFunctionStub(functionName, namespace, originalExpression);
+      continue;
+    }
 
-    stubs[filename] = generateLocalCodeFunctionStub(functionName, namespace, originalExpression);
+    // Also generate stubs for set-variable steps that contain complex C# helper calls.
+    // These are promoted to InvokeFunction actions by buildSetVariableAction() in workflow-generator.
+    if (step.type === 'set-variable') {
+      const cfg = step.config as Record<string, unknown>;
+      const expr = (cfg['expression'] as string | undefined) ?? '';
+      if (!expr || !isComplexCSharpCall(expr)) continue;
+      const info = extractMethodCallInfo(expr);
+      if (!info) continue;
+      const functionName = info.methodName;
+      const filename = `${functionName}.cs`;
+      if (stubs[filename]) continue; // deduplicate
+      stubs[filename] = generateLocalCodeFunctionStub(functionName, namespace, expr);
+    }
   }
   return stubs;
 }

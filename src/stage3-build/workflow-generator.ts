@@ -27,6 +27,11 @@ import type {
   IntegrationTrigger,
   ErrorHandlingConfig,
 } from '../shared/integration-intent.js';
+import {
+  translateCSharpToWdl,
+  isComplexCSharpCall,
+  extractMethodCallInfo,
+} from './csharp-translator.js';
 import type {
   WorkflowJson,
   WorkflowDefinition,
@@ -818,6 +823,30 @@ function parseXlangCondition(expr: string): Record<string, unknown> {
     }
   }
 
+  // Prefix negation: !condition
+  if (trimmed.startsWith('!')) {
+    const inner = trimmed.slice(1).trim();
+    if (inner) {
+      return { not: parseXlangCondition(inner) };
+    }
+  }
+
+  // str.Contains("x") → {"contains": ["@{variables('str')}", "x"]}
+  const containsMatch = /^([a-zA-Z_]\w*)\.Contains\((.+)\)$/.exec(trimmed);
+  if (containsMatch) {
+    const varName = containsMatch[1]!;
+    const argRaw = containsMatch[2]!.trim();
+    const argVal = /^"[^"]*"$/.test(argRaw) ? argRaw.slice(1, -1) : argRaw;
+    return { contains: [`@{variables('${varName}')}`, argVal] };
+  }
+
+  // string.IsNullOrEmpty(s) → {"equals": ["@{variables('s')}", ""]}
+  const isNullOrEmptyMatch = /^(?:string|String)\.IsNullOrEmpty\(([a-zA-Z_]\w*)\)$/.exec(trimmed);
+  if (isNullOrEmptyMatch) {
+    const varName = isNullOrEmptyMatch[1]!;
+    return { equals: [`@{variables('${varName}')}`, ''] };
+  }
+
   // Simple binary — check longer ops first to avoid partial match
   const OPS: [string, string][] = [
     ['>=', 'greaterOrEquals'], ['<=', 'lessOrEquals'],
@@ -833,12 +862,18 @@ function parseXlangCondition(expr: string): Record<string, unknown> {
     if (!lhs || !rhs) continue;
 
     const wdlLhs = `@{${lhs}}`;
-    const wdlRhs = isNumeric(rhs) ? Number(rhs) : rhs.replace(/^["']|["']$/g, '');
+    // Handle null literal → JSON null; otherwise numeric or string
+    const wdlRhs = rhs === 'null' ? null : isNumeric(rhs) ? Number(rhs) : rhs.replace(/^["']|["']$/g, '');
 
     if (wdlFn === 'not_equals') {
       return { not: { equals: [wdlLhs, wdlRhs] } };
     }
     return { [wdlFn]: [wdlLhs, wdlRhs] };
+  }
+
+  // Bare identifier (boolean variable): boolVar → {"equals": ["@{variables('boolVar')}", true]}
+  if (/^[a-zA-Z_]\w*$/.test(trimmed)) {
+    return { equals: [`@{variables('${trimmed}')}`, true] };
   }
 
   // Unparseable — use an honest placeholder rather than a tautology
@@ -966,9 +1001,35 @@ function buildSetVariableAction(step: IntegrationStep, runAfter: RunAfterMap): W
     'localVar';
   // Sanitize variable names derived from BizTalk — they may contain chars forbidden in WDL.
   const varName = sanitizeVariableName(rawVarName);
-  // config.expression holds the raw XLANG/s or partial WDL expression from the intent constructor.
-  // Use it as the value when config.value was not explicitly set by AI enrichment.
-  const resolvedValue = cfg['value'] ?? expression ?? '';
+
+  // Resolve the value: prefer explicit config.value, then try C# → WDL translation,
+  // then fall back to raw expression.
+  let resolvedValue: unknown = cfg['value'];
+  if (resolvedValue === undefined && expression) {
+    const translated = translateCSharpToWdl(expression);
+    if (translated !== null) {
+      resolvedValue = translated;
+    } else if (isComplexCSharpCall(expression)) {
+      // Complex helper class call → route to InvokeFunction instead of SetVariable
+      const info = extractMethodCallInfo(expression);
+      const functionName = info?.methodName
+        ?? step.id.replace(/^step_/, '').replace(/[^A-Za-z0-9_]/g, '_')
+        ?? 'CustomFunction';
+      return {
+        type: 'InvokeFunction',
+        inputs: {
+          functionName: sanitizeVariableName(functionName).slice(0, 80),
+          parameters: {
+            requestBody: '@{triggerBody()}',
+          },
+        },
+        runAfter,
+      } satisfies InvokeFunctionAction;
+    } else {
+      resolvedValue = expression;
+    }
+  }
+  resolvedValue = resolvedValue ?? '';
 
   if (cfg['initialize']) {
     return {

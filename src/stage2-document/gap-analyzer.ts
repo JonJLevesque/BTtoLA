@@ -360,6 +360,27 @@ const GAP_DEFS = {
       'schemas are available in Microsoft\'s GitHub repository and can be uploaded directly.',
     baseEffortDays: 2,
   },
+
+  messageAggregator: {
+    capability: 'Message Aggregator / Sequential Convoy (Correlation Sets)',
+    severity: 'high' as RiskSeverity,
+    description:
+      'The BizTalk MessageBox publish-subscribe aggregator (sequential convoy / correlation pattern) ' +
+      'has no direct equivalent in Logic Apps. BizTalk uses correlation sets to correlate multiple ' +
+      'inbound messages into a single long-running orchestration instance. Logic Apps workflows have ' +
+      'a single trigger — multi-message aggregation requires explicit state management and a ' +
+      'message-accumulation loop.',
+    mitigation:
+      'Recommended approach: replace BizTalk convoy/MessageBox aggregator with a Service Bus ' +
+      'peekLockQueueMessagesV2 batch trigger + ForEach loop + dictionary variable keyed by ' +
+      'CorrelationId. BizTalk correlation sets map directly to the Service Bus CorrelationId ' +
+      'message property — no schema changes needed. XSD flat file schemas from BizTalk work ' +
+      'as-is in Logic Apps Artifacts/Schemas/. Use a stateful workflow with an Until loop and ' +
+      'Append to Array Variable to accumulate messages until the completion condition is met. ' +
+      'For complex correlation with long-running state: store partial message batches in Azure ' +
+      'Blob Storage or Cosmos DB keyed by CorrelationId between workflow runs.',
+    baseEffortDays: 4,
+  },
 } satisfies Record<string, GapDefinition>;
 
 // ─── Adapters with known gaps ─────────────────────────────────────────────────
@@ -571,6 +592,11 @@ function orchestrationGaps(orch: ParsedOrchestration): GapHit[] {
   if (orch.hasCompensation)            hits.push({ def: GAP_DEFS.compensation,           effortDelta: 2 });
   if (orch.hasBRECalls)                hits.push({ def: GAP_DEFS.brePolicy,              effortDelta: 1 });
   if (orch.hasSuspend)                 hits.push({ def: GAP_DEFS.suspend,                effortDelta: 1 });
+
+  // Detect correlation sets → Message Aggregator / Sequential Convoy pattern
+  if (orch.correlationSets.length > 0) {
+    hits.push({ def: GAP_DEFS.messageAggregator, effortDelta: orch.correlationSets.length });
+  }
 
   // Detect ExpressionShapes with complex C# code (helper assembly calls)
   const complexExprs = collectExpressions(orch.shapes).filter(isComplexCSharp);
