@@ -326,8 +326,7 @@ function buildHostJson(app: BizTalkApplication): HostJson {
     extensions: {
       workflow: {
         settings: {
-          'Runtime.FlowRetentionDays':
-            '[[[concat(\'{\', string(parameters(\'retentionDays\')), \'}\')]]]',
+          'Runtime.FlowRetentionDays': retentionDays,
           'Runtime.Backend.FlowRunRetentionInDays': retentionDays,
         },
       },
