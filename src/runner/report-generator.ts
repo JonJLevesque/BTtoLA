@@ -3,13 +3,14 @@
  *
  * Produces a consultant-ready migration-report.md with:
  *   - Executive Summary table
- *   - Gap analysis table
+ *   - Detected integration patterns
+ *   - Gap analysis (severity-grouped narrative, not cramped table)
  *   - Architecture recommendation
  *   - Generated artifacts inventory
- *   - Quality score and grade
- *   - Deployment instructions
- *   - Manual next steps
- *   - Warnings list
+ *   - Quality score with visual bar
+ *   - Actionable fix list (numbered, not wide table)
+ *   - Warnings (split: auto-applied vs manual action required)
+ *   - Deployment and getting-started instructions
  *
  * Support: Me@Jonlevesque.com
  */
@@ -93,7 +94,7 @@ const PATTERN_DISPLAY_MAP: Partial<Record<IntegrationPattern, PatternDisplayInfo
   'message-aggregator': {
     displayName: 'Aggregator',
     support: 'partial',
-    logicAppsEquivalent: 'ForEach + Append to Array Variable',
+    logicAppsEquivalent: 'Service Bus batch trigger + ForEach + dictionary variable',
   },
   'scatter-gather': {
     displayName: 'Scatter-Gather',
@@ -127,6 +128,16 @@ const PATTERN_DISPLAY_MAP: Partial<Record<IntegrationPattern, PatternDisplayInfo
   },
 };
 
+// ── Score bar visualization ───────────────────────────────────────────────────
+
+function scoreBar(score: number, maxScore = 100): string {
+  const filled = Math.round((score / maxScore) * 20);
+  const empty  = 20 - filled;
+  return `${'█'.repeat(filled)}${'░'.repeat(empty)}`;
+}
+
+// ── Main report ───────────────────────────────────────────────────────────────
+
 export function generateMigrationReport(input: ReportInput): string {
   const {
     app,
@@ -147,17 +158,26 @@ export function generateMigrationReport(input: ReportInput): string {
   const highGaps     = gaps.filter(g => g.severity === 'high');
   const mediumGaps   = gaps.filter(g => g.severity === 'medium');
 
-  const gradeEmoji = { A: '🟢', B: '🟢', C: '🟡', D: '🟠', F: '🔴' };
-  const grade = qualityReport.grade;
+  const gradeEmoji: Record<string, string> = { A: '🟢', B: '🟢', C: '🟡', D: '🟠', F: '🔴' };
+  const grade     = qualityReport.grade;
   const gradeIcon = gradeEmoji[grade] ?? '⚪';
+
+  // Split warnings into auto-applied fixes vs manual-action items
+  const autoFixedWarnings  = warnings.filter(w => /\] Fixed:/i.test(w));
+  const attentionWarnings  = warnings.filter(w => !/\] Fixed:/i.test(w));
+
+  const hasOnPrem = app.bindingFiles.some(b =>
+    b.receiveLocations.some(r => r.address?.startsWith('C:\\') || r.address?.startsWith('\\\\')) ||
+    b.sendPorts.some(s => s.address?.startsWith('C:\\') || s.address?.startsWith('\\\\'))
+  );
 
   const lines: string[] = [];
 
   // ── Header ──────────────────────────────────────────────────────────────────
 
-  lines.push(`# BizTalk Migration Report: ${app.name}`);
+  lines.push(`# Migration Report — ${app.name}`);
   lines.push('');
-  lines.push(`Generated: ${date} | AI mode: ${clientMode} | Runtime: ${(totalMs / 1000).toFixed(1)}s`);
+  lines.push(`> **Date:** ${date} &nbsp;|&nbsp; **Quality:** ${gradeIcon} ${qualityReport.totalScore}/100 Grade ${grade} &nbsp;|&nbsp; **Runtime:** ${(totalMs / 1000).toFixed(1)}s &nbsp;|&nbsp; **Mode:** ${clientMode}`);
   lines.push('');
   lines.push('---');
   lines.push('');
@@ -167,106 +187,132 @@ export function generateMigrationReport(input: ReportInput): string {
   lines.push('## Executive Summary');
   lines.push('');
   lines.push('| Property | Value |');
-  lines.push('|----------|-------|');
+  lines.push('|---|---|');
   lines.push(`| Application | ${app.name} |`);
-  lines.push(`| Complexity | ${app.complexityClassification} (${app.complexityScore}/100) |`);
+  lines.push(`| Complexity | ${capitalize(app.complexityClassification)} (${app.complexityScore}/100) |`);
   lines.push(`| Orchestrations | ${app.orchestrations.length} |`);
   lines.push(`| Maps | ${app.maps.length} |`);
   lines.push(`| Pipelines | ${app.pipelines.length} |`);
-  lines.push(`| Bindings | ${app.bindingFiles.length} |`);
   lines.push(`| Workflows generated | ${buildResult.project.workflows.length} |`);
+  lines.push(`| Gaps — Critical / High / Medium | ${criticalGaps.length} / ${highGaps.length} / ${mediumGaps.length} |`);
   lines.push(`| Quality score | ${gradeIcon} ${qualityReport.totalScore}/100 Grade ${grade} |`);
-  lines.push(`| Critical gaps | ${criticalGaps.length} |`);
-  lines.push(`| High gaps | ${highGaps.length} |`);
-  lines.push(`| Medium gaps | ${mediumGaps.length} |`);
   lines.push('');
 
-  // ── Detected Enterprise Integration Patterns ─────────────────────────────────
+  // ── Detected Enterprise Integration Patterns ──────────────────────────────
 
   if (patterns && patterns.length > 0) {
-    lines.push('## Detected Enterprise Integration Patterns');
+    const known          = patterns.filter(p => PATTERN_DISPLAY_MAP[p] !== undefined);
+    const unknown        = patterns.filter(p => PATTERN_DISPLAY_MAP[p] === undefined);
+    const autoPatterns   = known.filter(p => PATTERN_DISPLAY_MAP[p]!.support === 'auto');
+    const partialPatterns    = known.filter(p => PATTERN_DISPLAY_MAP[p]!.support === 'partial');
+    const redesignPatterns   = known.filter(p => PATTERN_DISPLAY_MAP[p]!.support === 'redesign');
+
+    lines.push('## Integration Patterns');
     lines.push('');
-
-    const known   = patterns.filter(p => PATTERN_DISPLAY_MAP[p] !== undefined);
-    const unknown = patterns.filter(p => PATTERN_DISPLAY_MAP[p] === undefined);
-
-    const autoPatterns    = known.filter(p => PATTERN_DISPLAY_MAP[p]!.support === 'auto');
-    const partialPatterns = known.filter(p => PATTERN_DISPLAY_MAP[p]!.support === 'partial');
-    const redesignPatterns = known.filter(p => PATTERN_DISPLAY_MAP[p]!.support === 'redesign');
-
-    lines.push(`Detected **${patterns.length}** enterprise integration pattern(s): ` +
+    lines.push(
+      `${patterns.length} enterprise integration pattern(s) detected — ` +
       `${autoPatterns.length} migrate automatically, ` +
       `${partialPatterns.length} require review, ` +
-      `${redesignPatterns.length} require redesign.`);
+      `${redesignPatterns.length} require redesign.`
+    );
     lines.push('');
-    lines.push('| Pattern | Support | Logic Apps Equivalent |');
-    lines.push('|---------|---------|----------------------|');
+    lines.push('| Pattern | Migration | Logic Apps Equivalent |');
+    lines.push('|---|---|---|');
 
     for (const p of [...autoPatterns, ...partialPatterns, ...redesignPatterns]) {
       const info = PATTERN_DISPLAY_MAP[p]!;
-      const supportLabel =
-        info.support === 'auto'     ? '✅ Auto'     :
-        info.support === 'partial'  ? '⚠️ Partial'  : '❌ Redesign';
-      lines.push(`| ${info.displayName} | ${supportLabel} | ${info.logicAppsEquivalent} |`);
+      const label =
+        info.support === 'auto'    ? '✅ Automatic' :
+        info.support === 'partial' ? '⚠️ Needs review' : '❌ Redesign required';
+      lines.push(`| ${info.displayName} | ${label} | ${info.logicAppsEquivalent} |`);
     }
-
-    if (unknown.length > 0) {
-      for (const p of unknown) {
-        lines.push(`| ${p} | ⚠️ Partial | Manual review required |`);
-      }
+    for (const p of unknown) {
+      lines.push(`| ${p} | ⚠️ Needs review | Manual review required |`);
     }
-
-    lines.push('');
-    lines.push('> See the migration report above for pattern details and effort estimates.');
     lines.push('');
   }
 
   // ── Gap Analysis ─────────────────────────────────────────────────────────────
 
-  if (gaps.length > 0) {
-    lines.push('## Gap Analysis');
-    lines.push('');
-    lines.push('| Severity | Capability | Mitigation |');
-    lines.push('|----------|-----------|-----------|');
-    for (const gap of [...criticalGaps, ...highGaps, ...mediumGaps]) {
-      const sev = gap.severity === 'critical' ? '🔴 Critical' :
-                  gap.severity === 'high'     ? '🟠 High'     : '🟡 Medium';
-      lines.push(`| ${sev} | ${gap.capability} | ${gap.mitigation} |`);
-    }
-    lines.push('');
-  } else {
-    lines.push('## Gap Analysis');
-    lines.push('');
+  lines.push('## Gap Analysis');
+  lines.push('');
+
+  if (gaps.length === 0) {
     lines.push('✅ No migration gaps detected — clean migration.');
     lines.push('');
+  } else {
+    const totalEffort = gaps.reduce((sum, g) => sum + (g.estimatedEffortDays ?? 0), 0);
+    lines.push(`${gaps.length} gap(s) identified. Estimated total manual effort: **~${totalEffort} day(s)**.`);
+    lines.push('');
+
+    if (criticalGaps.length > 0) {
+      lines.push('### 🔴 Critical — Must resolve before deployment');
+      lines.push('');
+      for (const gap of criticalGaps) {
+        lines.push(`**${gap.capability}**`);
+        if (gap.description) lines.push(gap.description);
+        lines.push(`*Mitigation:* ${gap.mitigation}${gap.estimatedEffortDays ? ` *(~${gap.estimatedEffortDays}d)*` : ''}`);
+        lines.push('');
+      }
+    }
+
+    if (highGaps.length > 0) {
+      lines.push('### 🟠 High — Significant workaround required');
+      lines.push('');
+      for (const gap of highGaps) {
+        lines.push(`**${gap.capability}**`);
+        if (gap.description) lines.push(gap.description);
+        lines.push(`*Mitigation:* ${gap.mitigation}${gap.estimatedEffortDays ? ` *(~${gap.estimatedEffortDays}d)*` : ''}`);
+        lines.push('');
+      }
+    }
+
+    if (mediumGaps.length > 0) {
+      lines.push('### 🟡 Medium — Workaround available');
+      lines.push('');
+      for (const gap of mediumGaps) {
+        lines.push(`**${gap.capability}**`);
+        if (gap.description) lines.push(gap.description);
+        lines.push(`*Mitigation:* ${gap.mitigation}${gap.estimatedEffortDays ? ` *(~${gap.estimatedEffortDays}d)*` : ''}`);
+        lines.push('');
+      }
+    }
   }
 
-  // ── Architecture Recommendation ───────────────────────────────────────────────
+  // ── Architecture Recommendation ───────────────────────────────────────────
 
   lines.push('## Architecture Recommendation');
   lines.push('');
-  lines.push('**Target:** Azure Logic Apps Standard (single-tenant)');
+  lines.push('**Target platform:** Azure Logic Apps Standard (single-tenant, Workflow Standard plan)');
   lines.push('');
 
-  const hasOnPrem = app.bindingFiles.some(b =>
-    b.receiveLocations.some(r => r.address?.startsWith('C:\\') || r.address?.startsWith('\\\\')) ||
-    b.sendPorts.some(s => s.address?.startsWith('C:\\') || s.address?.startsWith('\\\\'))
-  );
+  // Connector inventory from binding files
+  const adapterTypes = new Set<string>();
+  for (const b of app.bindingFiles) {
+    for (const r of b.receiveLocations) if (r.adapterType) adapterTypes.add(r.adapterType);
+    for (const s of b.sendPorts)        if (s.adapterType) adapterTypes.add(s.adapterType);
+  }
+  if (adapterTypes.size > 0) {
+    lines.push(`**Adapters in use:** ${[...adapterTypes].join(', ')}`);
+    lines.push('');
+  }
 
   if (hasOnPrem) {
-    lines.push('**On-premises connectivity:** On-premises data gateway required for FILE/SQL adapters with local paths.');
+    lines.push('**On-premises connectivity required:** On-premises data gateway needed for FILE/SQL adapters with local paths.');
     lines.push('');
   }
 
   if (app.maps.length > 0) {
-    lines.push('**Integration Account:** Required for XSLT map execution from converted .btm files.');
+    lines.push('**Integration Account:** Required for XSLT map execution from converted `.btm` files.');
     lines.push('');
   }
 
-  lines.push('**Connector strategy:** ServiceProvider (built-in) connectors used where available for better performance and simpler configuration.');
+  lines.push('**Connector preference:** Built-in ServiceProvider connectors used where available — better performance, no managed connection overhead.');
+  lines.push('');
+  lines.push('**Security:** All sensitive values reference Key Vault secrets via `@appsetting(\'KVS_...\')` — no connection strings in source control.');
   lines.push('');
 
-  // ── Generated Artifacts ────────────────────────────────────────────────────────
+  // ── Generated Artifacts ───────────────────────────────────────────────────
 
   lines.push('## Generated Artifacts');
   lines.push('');
@@ -274,7 +320,7 @@ export function generateMigrationReport(input: ReportInput): string {
   lines.push('');
 
   if (buildResult.project.workflows.length > 0) {
-    lines.push('**Workflows:**');
+    lines.push('**Workflows**');
     for (const wf of buildResult.project.workflows) {
       lines.push(`- \`${wf.name}/workflow.json\``);
     }
@@ -284,38 +330,45 @@ export function generateMigrationReport(input: ReportInput): string {
   const xsltCount = Object.keys(buildResult.project.xsltMaps).length;
   const lmlCount  = Object.keys(buildResult.project.lmlMaps).length;
   if (xsltCount + lmlCount > 0) {
-    lines.push('**Maps:**');
+    lines.push('**Maps**');
     for (const name of Object.keys(buildResult.project.xsltMaps)) {
-      lines.push(`- \`Artifacts/Maps/${name}\` (XSLT)`);
+      lines.push(`- \`Artifacts/Maps/${name}\` — XSLT`);
     }
     for (const name of Object.keys(buildResult.project.lmlMaps)) {
-      lines.push(`- \`Artifacts/Maps/${name}\` (Data Mapper LML)`);
+      lines.push(`- \`Artifacts/Maps/${name}\` — Data Mapper LML`);
     }
     lines.push('');
   }
 
-  lines.push('**Configuration files:**');
-  lines.push('- `connections.json` — connector configuration');
+  if (buildResult.localCodeFunctions && Object.keys(buildResult.localCodeFunctions).length > 0) {
+    lines.push('**Local Code Function stubs** *(implement before deploying)*');
+    for (const name of Object.keys(buildResult.localCodeFunctions)) {
+      lines.push(`- \`${name}\``);
+    }
+    lines.push('');
+  }
+
+  lines.push('**Configuration**');
+  lines.push('- `connections.json` — connector definitions');
   lines.push('- `host.json` — Logic Apps host settings');
-  lines.push('- `local.settings.json` — local dev settings (gitignore this)');
+  lines.push('- `local.settings.json` — local dev settings *(gitignore this)*');
   if (Object.keys(buildResult.armTemplate).length > 0) {
-    lines.push('- `arm-template.json` — ARM deployment template');
-    lines.push('- `arm-parameters.json` — ARM parameters');
+    lines.push('- `arm-template.json` + `arm-parameters.json` — ARM deployment');
   }
   lines.push('');
 
-  // ── Quality Report ────────────────────────────────────────────────────────────
+  // ── Quality Report ────────────────────────────────────────────────────────
 
   lines.push('## Quality Report');
   lines.push('');
-  lines.push(`**Score:** ${qualityReport.totalScore}/100  **Grade:** ${gradeIcon} ${grade}`);
+  lines.push(`**Score:** ${qualityReport.totalScore}/100 &nbsp; \`${scoreBar(qualityReport.totalScore)}\` &nbsp; ${gradeIcon} **Grade ${grade}**`);
   lines.push('');
   lines.push(`> ${qualityReport.summary}`);
   lines.push('');
 
   if (qualityReport.dimensions.length > 0) {
     lines.push('| Dimension | Score | Max |');
-    lines.push('|-----------|-------|-----|');
+    lines.push('|---|---|---|');
     for (const dim of qualityReport.dimensions) {
       lines.push(`| ${dim.name} | ${dim.score} | ${dim.maxScore} |`);
     }
@@ -323,129 +376,88 @@ export function generateMigrationReport(input: ReportInput): string {
   }
 
   if (qualityReport.recommendations.length > 0) {
-    lines.push('**Recommendations:**');
+    lines.push('**Recommendations to improve score:**');
     for (const rec of qualityReport.recommendations) {
       lines.push(`- ${rec}`);
     }
     lines.push('');
   }
 
-  // ── Actionable Fix List ────────────────────────────────────────────────────────
-  // Map errors and quality recommendations to specific, numbered fixes.
-  // Helps consultants burn down issues one by one.
+  // ── Actionable Fix List ───────────────────────────────────────────────────
 
   const allFixItems: Array<{ issue: string; action: string; impact: string }> = [];
 
   for (const error of errors) {
     allFixItems.push(errorToFix(error));
   }
+
   const REC_ACTIONS: Record<string, string> = {
-    'Add a Scope with runAfter FAILED': 'Wrap main actions in Scope_Main; add Terminate_On_Error with runAfter: { Scope_Main: ["FAILED", "TIMEDOUT"] }',
+    'Add a Scope with runAfter FAILED': 'Wrap main actions in `Scope_Main`; add `Terminate_On_Error` with `runAfter: { Scope_Main: ["FAILED", "TIMEDOUT"] }`',
     'Ensure all intent steps': 'Review dropped steps — some BizTalk shapes may lack a direct Logic Apps equivalent; add Compose placeholders',
-    'Add retryPolicy to all HTTP': 'Add retryPolicy: { type: "fixed", count: 3, interval: "PT30S" } to each Http action inputs',
-    'Change all runAfter status values': 'Find and replace "Succeeded"/"Failed" with "SUCCEEDED"/"FAILED" in workflow.json',
-    'Use KVS_ prefix': 'Rename sensitive @appsetting keys to start with KVS_ (e.g. KVS_Storage_Blob_ConnectionString)',
-    'Consider using Stateful': 'Set "kind": "Stateful" at the workflow root — required for BizTalk migrations',
-    'Remove circular runAfter': 'Check the runAfter graph for cycles; remove the back-edge causing the loop',
+    'Add retryPolicy to all HTTP': 'Add `retryPolicy: { type: "fixed", count: 3, interval: "PT30S" }` to each Http action',
+    'Change all runAfter status values': 'Replace `"Succeeded"`/`"Failed"` with `"SUCCEEDED"`/`"FAILED"` in workflow.json',
+    'Use KVS_ prefix': 'Rename sensitive `@appsetting` keys to start with `KVS_` (e.g. `KVS_Storage_Blob_ConnectionString`)',
+    'Consider using Stateful': 'Set `"kind": "Stateful"` at the workflow root — required for BizTalk migrations',
+    'Remove circular runAfter': 'Check the runAfter dependency graph for cycles and remove the back-edge causing the loop',
   };
+
   for (const rec of qualityReport.recommendations) {
     const actionKey = Object.keys(REC_ACTIONS).find(k => rec.startsWith(k));
     const action = actionKey ? REC_ACTIONS[actionKey]! : rec;
-    allFixItems.push({ issue: `Quality: ${rec}`, action, impact: 'Score improvement' });
+    allFixItems.push({ issue: rec, action, impact: 'Score improvement' });
   }
 
   if (allFixItems.length > 0) {
     lines.push('## Actionable Fix List');
     lines.push('');
-    lines.push('Address each item below to improve migration quality and close deployment gaps.');
+    lines.push('Address each item to improve quality and close deployment gaps.');
     lines.push('');
-    lines.push('| # | Issue | Recommended Fix | Impact |');
-    lines.push('|---|-------|-----------------|--------|');
     for (let i = 0; i < allFixItems.length; i++) {
       const item = allFixItems[i]!;
-      lines.push(`| ${i + 1} | ${item.issue} | ${item.action} | ${item.impact} |`);
-    }
-    lines.push('');
-  }
-
-  // ── Deployment Instructions ───────────────────────────────────────────────────
-
-  lines.push('## Deployment Instructions');
-  lines.push('');
-  lines.push('### Prerequisites');
-  lines.push('- Azure subscription with Logic Apps Standard resource');
-  lines.push('- Azure CLI (`az login`)');
-  lines.push('- VS Code with Azure Logic Apps (Standard) extension');
-  lines.push('');
-  lines.push('### Steps');
-  lines.push('');
-  lines.push('1. **Configure app settings** in Azure Portal → Logic App → Configuration:');
-  lines.push('   - Add all `KVS_*` secrets as Key Vault references');
-  lines.push('   - Add all `Common_*` and `Workflow_*` settings as plain values');
-  lines.push('');
-  lines.push('2. **Deploy via VS Code:**');
-  lines.push('   ```');
-  lines.push(`   Right-click \`${outputDir}\` → Deploy to Logic App...`);
-  lines.push('   ```');
-  lines.push('');
-  lines.push('3. **Deploy via Azure CLI:**');
-  lines.push('   ```bash');
-  lines.push(`   az logicapp deployment source config-zip \\`);
-  lines.push(`    --name <logic-app-name> \\`);
-  lines.push(`    --resource-group <resource-group> \\`);
-  lines.push(`    --src <path-to-zip>`);
-  lines.push('   ```');
-  lines.push('');
-  lines.push('4. **Verify:** Open Logic App in Azure Portal → check each workflow runs successfully.');
-  lines.push('');
-
-  // ── Manual Next Steps ─────────────────────────────────────────────────────────
-
-  lines.push('## Manual Next Steps');
-  lines.push('');
-
-  const nextSteps: string[] = [];
-
-  if (criticalGaps.length > 0) {
-    nextSteps.push(`**Address ${criticalGaps.length} critical gap(s)** before deployment:`);
-    for (const g of criticalGaps) {
-      nextSteps.push(`  - ${g.capability}: ${g.mitigation}`);
+      lines.push(`**${i + 1}. ${item.issue}**`);
+      lines.push(`- Fix: ${item.action}`);
+      lines.push(`- Impact: ${item.impact}`);
+      lines.push('');
     }
   }
 
-  if (app.maps.length > 0) {
-    nextSteps.push('Review converted XSLT maps — C# scripting functoids require Azure Functions replacement');
-  }
+  // ── Warnings ──────────────────────────────────────────────────────────────
 
-  nextSteps.push('Replace all `KVS_*` placeholder values with actual Key Vault secret URIs');
-  nextSteps.push('Test each workflow end-to-end with representative sample messages');
-  nextSteps.push('Set up Azure Monitor alerts for workflow failures');
+  const uniqueAutoFixed  = [...new Set(autoFixedWarnings)];
+  const uniqueAttention  = [...new Set(attentionWarnings)];
 
-  if (hasOnPrem) {
-    nextSteps.push('Install and register On-premises Data Gateway for FILE/SQL connectors');
-  }
-
-  for (const step of nextSteps) {
-    lines.push(`- ${step}`);
-  }
-  lines.push('');
-
-  // ── Warnings ──────────────────────────────────────────────────────────────────
-
-  if (warnings.length > 0) {
+  if (uniqueAutoFixed.length > 0 || uniqueAttention.length > 0) {
     lines.push('## Warnings');
     lines.push('');
-    const uniqueWarnings = [...new Set(warnings)];
-    for (const w of uniqueWarnings.slice(0, 20)) {
-      lines.push(`- ⚠ ${w}`);
+
+    if (uniqueAutoFixed.length > 0) {
+      lines.push('### Applied Automatically');
+      lines.push('These changes were applied by the AI review pass — no action needed.');
+      lines.push('');
+      for (const w of uniqueAutoFixed) {
+        // Strip the "[WorkflowName] Fixed: " prefix for cleaner display
+        const clean = w.replace(/^\[.*?\]\s+Fixed:\s*/i, '');
+        const wfMatch = /^\[(.+?)\]/.exec(w);
+        const prefix = wfMatch ? `\`${wfMatch[1]}\`: ` : '';
+        lines.push(`- ${prefix}${clean}`);
+      }
+      lines.push('');
     }
-    if (uniqueWarnings.length > 20) {
-      lines.push(`- ... and ${uniqueWarnings.length - 20} more`);
+
+    if (uniqueAttention.length > 0) {
+      lines.push('### Requires Manual Action');
+      lines.push('');
+      for (const w of uniqueAttention.slice(0, 30)) {
+        lines.push(`- ⚠️ ${w}`);
+      }
+      if (uniqueAttention.length > 30) {
+        lines.push(`- *... and ${uniqueAttention.length - 30} more*`);
+      }
+      lines.push('');
     }
-    lines.push('');
   }
 
-  // ── Errors ────────────────────────────────────────────────────────────────────
+  // ── Non-Fatal Errors ──────────────────────────────────────────────────────
 
   if (errors.length > 0) {
     lines.push('## Non-Fatal Errors');
@@ -456,62 +468,104 @@ export function generateMigrationReport(input: ReportInput): string {
       lines.push(`- ❌ ${e}`);
     }
     if (errors.length > 10) {
-      lines.push(`- ... and ${errors.length - 10} more`);
+      lines.push(`- *... and ${errors.length - 10} more*`);
     }
     lines.push('');
   }
 
-  // ── Getting Started ───────────────────────────────────────────────────────────
+  // ── Getting Started ───────────────────────────────────────────────────────
 
   lines.push('## Getting Started');
   lines.push('');
-  lines.push('Open this output folder in VS Code to work with the migrated Logic Apps project:');
-  lines.push('');
-  lines.push('1. **Install the extension** — "Azure Logic Apps (Standard)" (`ms-azuretools.vscode-azurelogicapps`)');
+  lines.push('1. **Install the extension** — "Azure Logic Apps (Standard)" in VS Code (`ms-azuretools.vscode-azurelogicapps`)');
   lines.push('2. **Open the folder** — File → Open Folder → select this output directory');
-  lines.push('3. **The `.vscode/settings.json`** is pre-configured for Logic Apps Standard');
-  lines.push('4. **Start Azurite** — the designer requires the local storage emulator. Click each item in');
-  lines.push('   the VS Code bottom status bar: `Azurite Table Service`, `Azurite Queue Service`, `Azurite Blob Service`.');
-  lines.push('   All three must show as running (green) before the designer will load. If Azurite is not installed,');
-  lines.push('   run: `npm install -g azurite`');
-  lines.push('5. **Edit connection settings** — update `local.settings.json` with your real connection strings');
-  lines.push('6. **Open a workflow in Designer** — right-click any `workflow.json` → "Open in Designer"');
-  lines.push('7. **Deploy to Azure** — use the Logic Apps extension sidebar → Deploy to Logic App');
+  lines.push('3. **Start Azurite** — the designer requires the local storage emulator.');
+  lines.push('   Click `Azurite Blob Service`, `Azurite Queue Service`, and `Azurite Table Service` in the VS Code status bar.');
+  lines.push('   All three must be running (green) before the designer will load.');
+  lines.push('   If Azurite is not installed: `npm install -g azurite`');
+  lines.push('4. **Configure connection strings** — update `local.settings.json` with your real values');
+  lines.push('5. **Open a workflow** — right-click any `workflow.json` → "Open in Designer"');
+  lines.push('6. **Deploy** — Logic Apps extension sidebar → Deploy to Logic App');
   lines.push('');
-  if (buildResult.localCodeFunctions && Object.keys(buildResult.localCodeFunctions).length > 0) {
-    lines.push('**Local Code Functions** — the following `.cs` stubs were generated for custom C# logic:');
-    for (const name of Object.keys(buildResult.localCodeFunctions)) {
-      lines.push(`- \`${name}\` — implement the transformation logic before deploying`);
+  lines.push('Maps are in `Artifacts/Maps/` and Schemas are in `Artifacts/Schemas/`.');
+  lines.push('');
+
+  // ── Manual Next Steps ─────────────────────────────────────────────────────
+
+  lines.push('## Manual Next Steps');
+  lines.push('');
+
+  if (criticalGaps.length > 0) {
+    lines.push(`**Before deployment — address ${criticalGaps.length} critical gap(s):**`);
+    for (const g of criticalGaps) {
+      lines.push(`- ${g.capability}: ${g.mitigation}`);
     }
     lines.push('');
   }
-  lines.push('**Maps** are in `Artifacts/Maps/` and **Schemas** are in `Artifacts/Schemas/`.');
+
+  if (app.maps.length > 0) {
+    lines.push('- Review converted maps — C# scripting functoids require Local Code Function implementation');
+  }
+  lines.push('- Replace all `KVS_*` placeholder values with actual Azure Key Vault secret URIs');
+  lines.push('- Run end-to-end tests with representative sample messages for each workflow');
+  lines.push('- Set up Azure Monitor alerts for workflow failures');
+  if (hasOnPrem) {
+    lines.push('- Install and register the On-premises Data Gateway for FILE/SQL connectors');
+  }
   lines.push('');
 
-  // ── Footer ────────────────────────────────────────────────────────────────────
+  // ── Deployment Instructions ───────────────────────────────────────────────
+
+  lines.push('## Deployment');
+  lines.push('');
+  lines.push('**Prerequisites:** Azure subscription · Azure CLI (`az login`) · VS Code with Azure Logic Apps (Standard) extension');
+  lines.push('');
+  lines.push('**Option A — VS Code:**');
+  lines.push('```');
+  lines.push(`Right-click the output folder → "Deploy to Logic App..."`);
+  lines.push('```');
+  lines.push('');
+  lines.push('**Option B — Azure CLI:**');
+  lines.push('```bash');
+  lines.push(`az logicapp deployment source config-zip \\`);
+  lines.push(`  --name <logic-app-name> \\`);
+  lines.push(`  --resource-group <resource-group> \\`);
+  lines.push(`  --src <path-to-zip>`);
+  lines.push('```');
+  lines.push('');
+  lines.push('**Configure app settings** in Azure Portal → Logic App → Configuration:');
+  lines.push('- Add all `KVS_*` entries as Key Vault references');
+  lines.push('- Add all `Common_*` and `Workflow_*` entries as plain values');
+  lines.push('');
+
+  // ── Footer ────────────────────────────────────────────────────────────────
 
   lines.push('---');
   lines.push('');
-  lines.push('*Generated by BizTalk to Logic Apps Migration Framework*');
+  lines.push('*Generated by [BizTalk to Logic Apps Migration Framework](https://biztalkmigrate.com)*  ');
   lines.push('*Support: Me@Jonlevesque.com*');
 
   return lines.join('\n');
 }
 
-// ─── Error-to-Fix Mapper ──────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 function errorToFix(error: string): { issue: string; action: string; impact: string } {
   if (error.includes('TODO_CLAUDE'))
-    return { issue: error, action: 'Run AI enrichment or manually translate the XLANG/s expression to WDL', impact: '+5-15 pts' };
+    return { issue: error, action: 'Run AI enrichment or manually translate the XLANG/s expression to WDL `@{...}` syntax', impact: '+5–15 pts' };
   if (error.includes('connections') || error.includes('connection'))
-    return { issue: error, action: 'Add missing connector entry to connections.json with correct parameterValues', impact: 'Deployment fix' };
+    return { issue: error, action: 'Add the missing connector entry to `connections.json` with the correct `parameterValues`', impact: 'Deployment fix' };
   if (error.includes('runAfter'))
-    return { issue: error, action: 'Change runAfter status values to ALL CAPS: SUCCEEDED, FAILED, TIMEDOUT, SKIPPED', impact: '+10 pts' };
+    return { issue: error, action: 'Change `runAfter` status values to ALL CAPS: `SUCCEEDED`, `FAILED`, `TIMEDOUT`, `SKIPPED`', impact: '+10 pts' };
   if (error.includes('empty value') || error.includes('SetVariable'))
-    return { issue: error, action: 'Translate C# expression to WDL @{...} syntax and set as the value', impact: '+3-9 pts' };
+    return { issue: error, action: 'Translate the C# expression to WDL `@{...}` syntax and set it as the action value', impact: '+3–9 pts' };
   if (error.includes('Intent validation'))
     return { issue: error, action: 'Fix the IntegrationIntent structure — check for missing required fields', impact: 'Build fix' };
   if (error.includes('parse') || error.includes('Parse'))
-    return { issue: error, action: 'Review source artifact for encoding or syntax issues', impact: 'Parse fix' };
+    return { issue: error, action: 'Review the source artifact for encoding or syntax issues', impact: 'Parse fix' };
   return { issue: error, action: 'Manual review required — check the specific workflow section', impact: 'Variable' };
 }
