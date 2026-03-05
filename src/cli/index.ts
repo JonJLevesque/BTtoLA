@@ -50,6 +50,7 @@ import { runMigration }        from '../runner/index.js';
 import { writeOutput }         from '../runner/index.js';
 import { runEstateAssessment } from '../runner/index.js';
 import { extractMsi }          from '../runner/index.js';
+import { estateReportToHtml }  from '../runner/markdown-to-html.js';
 import type { BizTalkApplication } from '../types/biztalk.js';
 import type { MigrationResult }    from '../types/migration.js';
 
@@ -189,7 +190,9 @@ program
       }
 
       console.log('');
-      console.log(`  ${chalk.bold('migration-report.md')} written to ${chalk.cyan(runOpts.output)}`);
+      console.log(`  Reports written to ${chalk.cyan(runOpts.output)}`);
+      console.log(`    ${chalk.bold('migration-report.md')}   (machine-readable)`);
+      console.log(`    ${chalk.bold('migration-report.html')}  (open in browser, print to PDF)`);
       console.log(chalk.bold('────────────────────────────────────────────────────\n'));
 
     } catch (error) {
@@ -348,9 +351,11 @@ program
         },
       });
 
-      // Write the report to disk
+      // Write the report to disk (Markdown + HTML)
       ensureDir(dirname(estateOpts.output));
       writeFileSync(estateOpts.output, result.report, 'utf-8');
+      const estateHtmlPath = estateOpts.output.replace(/\.md$/i, '') + '.html';
+      writeFileSync(estateHtmlPath, estateReportToHtml(result.report), 'utf-8');
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       spinner.succeed(chalk.green(`Estate assessment complete`));
@@ -367,7 +372,9 @@ program
         console.log(`  Parse failures: ${chalk.yellow(result.failures.length)}`);
       }
       console.log('');
-      console.log(`  ${chalk.bold('estate-report.md')} written to ${chalk.cyan(estateOpts.output)}`);
+      console.log(`  Reports written to ${chalk.cyan(dirname(estateOpts.output))}`);
+      console.log(`    ${chalk.bold('estate-report.md')}   (machine-readable)`);
+      console.log(`    ${chalk.bold('estate-report.html')}  (open in browser, print to PDF)`);
       console.log(chalk.bold('────────────────────────────────────────────────────\n'));
 
     } catch (error) {

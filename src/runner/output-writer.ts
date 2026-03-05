@@ -25,11 +25,13 @@
  *       {WorkflowName}.tests.json
  *     {AppName}.code-workspace
  *     migration-report.md
+ *     migration-report.html    (browser-ready, print to PDF via Ctrl+P)
  */
 
 import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'fs';
 import { join, basename } from 'path';
 import type { BuildResult } from '../stage3-build/package-builder.js';
+import { migrationReportToHtml } from './markdown-to-html.js';
 
 export interface WriteOptions {
   /** The directory to write all output files to */
@@ -133,6 +135,11 @@ export function writeOutput(options: WriteOptions): void {
 
   // ── Migration report ────────────────────────────────────────────────────────
   writeFileSync(join(outputDir, 'migration-report.md'), migrationReport, 'utf-8');
+  writeFileSync(
+    join(outputDir, 'migration-report.html'),
+    migrationReportToHtml(migrationReport, buildResult.project.appName),
+    'utf-8'
+  );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
