@@ -527,10 +527,9 @@ export function generateMigrationReport(input: ReportInput): string {
   lines.push('|---|---|');
   lines.push('| **Generated test specs** (`tests/*.tests.json`) | Run with the Logic Apps test runner — no Azure required |');
   lines.push('| **Microsoft unit testing NuGet** (`Microsoft.Azure.Workflows.UnitTesting`) | Local CI; mock individual actions without deploying |');
-  lines.push('| **IntegrationPlaybook testing framework** | Integration/smoke tests against deployed Azure instance |');
+  lines.push('| **Azure Management API integration tests** | Trigger live deployed workflow; validate run history in CI/CD |');
   lines.push('');
   lines.push('- Microsoft unit testing docs: https://learn.microsoft.com/azure/logic-apps/create-run-custom-code-functions');
-  lines.push('- IntegrationPlaybook framework: https://github.com/michaelstephensonuk/IntegrationPlaybook-LogicApp-Standard-Testing');
   if (hasOnPrem) {
     lines.push('- Install and register the On-premises Data Gateway for FILE/SQL connectors');
   }

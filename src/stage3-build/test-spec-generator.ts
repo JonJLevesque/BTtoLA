@@ -26,15 +26,11 @@
  *     Runs the workflow engine in-process; mock individual actions.
  *
  *   Integration testing (against deployed Azure workflow):
- *     IntegrationPlaybook-LogicApp-Standard-Testing by Michael Stephenson
- *     https://github.com/michaelstephensonuk/IntegrationPlaybook-LogicApp-Standard-Testing
- *     Triggers live workflows via Azure Management API; validates run history.
- *     Designed for CI/CD pipelines against deployed Logic App Standard instances.
+ *     Trigger live workflows via Azure Management API; validate run history.
+ *     The C# scaffold below uses this approach — adapt for your CI/CD pipeline.
  *
  * The C# scaffold generated here uses the HttpClient/Management API approach
- * (compatible with both frameworks) — adapt as needed for your test runner.
- *
- * Reference: wsilveiranz/logicapps-unittest-custom-agent
+ * — adapt as needed for your test runner.
  */
 
 import type { IntegrationIntent, IntegrationStep } from '../shared/integration-intent.js';
@@ -134,9 +130,8 @@ export function generateMsTestScaffold(
     `/// For local unit tests without Azure, use the Microsoft.Azure.Workflows.UnitTesting NuGet:`,
     `///   https://learn.microsoft.com/azure/logic-apps/create-run-custom-code-functions`,
     `///`,
-    `/// For full CI/CD integration testing against Azure, consider:`,
-    `///   IntegrationPlaybook-LogicApp-Standard-Testing (Michael Stephenson)`,
-    `///   https://github.com/michaelstephensonuk/IntegrationPlaybook-LogicApp-Standard-Testing`,
+    `/// For full CI/CD integration testing against a deployed Azure instance,`,
+    `/// trigger the workflow via Azure Management API and validate run history.`,
     `///`,
     `/// Prerequisites:`,
     `///   1. Deploy the Logic Apps Standard app to Azure`,

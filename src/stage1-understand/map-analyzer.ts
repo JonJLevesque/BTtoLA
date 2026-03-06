@@ -35,7 +35,7 @@ import type {
 } from '../types/biztalk.js';
 
 // ─── Functoid ID Ranges ───────────────────────────────────────────────────────
-// From BizTalk Server documentation and BizTalkMigrationStarter registry
+// From BizTalk Server documentation
 
 const FUNCTOID_RANGES: Array<{ min: number; max: number; category: FunctoidCategory }> = [
   { min: 60,    max: 99,    category: 'database'   },
