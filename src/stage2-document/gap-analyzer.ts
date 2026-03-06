@@ -381,6 +381,73 @@ const GAP_DEFS = {
       'Blob Storage or Cosmos DB keyed by CorrelationId between workflow runs.',
     baseEffortDays: 4,
   },
+  swiftMt: {
+    capability: 'SWIFT MT Accelerator',
+    severity: 'high' as RiskSeverity,
+    description:
+      'BizTalk SWIFT accelerator handles SWIFT MT message parsing, validation, and routing ' +
+      'via the SWIFT Message Pack for BizTalk. Azure Logic Apps has no native SWIFT MT connector. ' +
+      'The Azure API for SWIFT (cloud-only) provides SWIFT connectivity but requires enrollment ' +
+      'with your SWIFT service bureau and does not replicate the full BizTalk SWIFT pipeline behavior.',
+    mitigation:
+      'Option A (cloud): Enroll in Azure API for SWIFT — provides ISO 20022 and SWIFT MT support ' +
+      'via managed connector. Requires SWIFT connectivity agreement and Service Bureau onboarding (~4–8 weeks). ' +
+      'Option B (on-premises): Deploy Azure Functions with the SWIFT Alliance Access SDK or ' +
+      'a third-party SWIFT library (e.g., SWIFTNet Link). ' +
+      'In both cases, BizTalk SWIFT schemas (MT103, MT202, etc.) must be validated for compatibility ' +
+      'with the chosen Azure integration path.',
+    baseEffortDays: 10,
+  },
+
+  ibmCics: {
+    capability: 'IBM CICS Adapter (Host Integration)',
+    severity: 'critical' as RiskSeverity,
+    description:
+      'BizTalk adapters for IBM CICS communicate with mainframe transaction programs via ' +
+      'LU 6.2 (SNA) or TCP/IP. Azure Logic Apps has no native CICS connector. ' +
+      'This adapter requires on-premises mainframe access and SNA Server or Host Integration Server (HIS).',
+    mitigation:
+      'Required: Microsoft Host Integration Server (HIS) or Azure Logic Apps on-premises data gateway ' +
+      'with HIS Transaction Integrator (TI). Deploy an Azure Function that wraps the HIS TI COM+ component ' +
+      'and exposes it as an HTTP endpoint; call from Logic Apps via HTTP action. ' +
+      'Alternatively, work with the mainframe team to expose CICS programs as REST APIs via IBM z/OS Connect. ' +
+      'Budget significant effort for mainframe coordination and TI metadata regeneration.',
+    baseEffortDays: 15,
+  },
+
+  ibmIms: {
+    capability: 'IBM IMS Adapter (Host Integration)',
+    severity: 'critical' as RiskSeverity,
+    description:
+      'BizTalk adapters for IBM IMS communicate with IMS transaction programs via LU 6.2 or TCP/IP. ' +
+      'Azure Logic Apps has no native IMS connector. Like CICS, this requires Host Integration Server ' +
+      'and on-premises mainframe connectivity.',
+    mitigation:
+      'Same path as CICS: Host Integration Server (HIS) + Transaction Integrator (TI) wrapped in ' +
+      'an Azure Function, exposed as HTTP. Alternatively, expose IMS programs via IBM IMS Connect ' +
+      'and access via TCP socket from an Azure Function. ' +
+      'Coordinate with mainframe operations team — IMS metadata (PCBs, DBDs) must be re-imported into HIS TI. ' +
+      'Budget significant effort for mainframe coordination.',
+    baseEffortDays: 15,
+  },
+
+  vasmHostFile: {
+    capability: 'IBM Host File / VSAM Adapter',
+    severity: 'high' as RiskSeverity,
+    description:
+      'BizTalk Host File adapter accesses VSAM (Virtual Storage Access Method) files and ' +
+      'sequential datasets on IBM mainframes via Host Integration Server. ' +
+      'Azure Logic Apps has no native VSAM or Host File connector.',
+    mitigation:
+      'Option A: Use Host Integration Server (HIS) Managed Data Provider for Host Files — ' +
+      'wrap in an Azure Function exposed as HTTP; call from Logic Apps. ' +
+      'Option B: Work with mainframe team to expose VSAM data as DB2 tables (if applicable) ' +
+      'and use the Logic Apps IBM Db2 built-in connector. ' +
+      'Option C: Implement a batch extract/load process — mainframe produces flat files, ' +
+      'Azure picks them up via SFTP or Azure Blob. Not real-time, but often sufficient.',
+    baseEffortDays: 8,
+  },
+
 } satisfies Record<string, GapDefinition>;
 
 // ─── Adapters with known gaps ─────────────────────────────────────────────────
@@ -388,6 +455,23 @@ const GAP_DEFS = {
 const ADAPTER_GAPS: Record<string, GapDefinition> = {
   'WCF-NetNamedPipe': GAP_DEFS.wcfNetNamedPipe,
   'WCF-NetTcp':       GAP_DEFS.wcfNetTcp,
+
+  // SWIFT accelerator
+  'SWIFT':            GAP_DEFS.swiftMt,
+  'SWIFTAdapter':     GAP_DEFS.swiftMt,
+  'Swift':            GAP_DEFS.swiftMt,
+
+  // IBM mainframe adapters (via Host Integration Server)
+  'CICS':             GAP_DEFS.ibmCics,
+  'IBMCics':          GAP_DEFS.ibmCics,
+  'IBM CICS':         GAP_DEFS.ibmCics,
+  'IMS':              GAP_DEFS.ibmIms,
+  'IBMIms':           GAP_DEFS.ibmIms,
+  'IBM IMS':          GAP_DEFS.ibmIms,
+  'HostFile':         GAP_DEFS.vasmHostFile,
+  'IBMHostFile':      GAP_DEFS.vasmHostFile,
+  'VSAM':             GAP_DEFS.vasmHostFile,
+
   'WCF-Custom': {
     capability: 'WCF-Custom Adapter',
     severity: 'medium' as RiskSeverity,

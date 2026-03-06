@@ -520,6 +520,17 @@ export function generateMigrationReport(input: ReportInput): string {
   lines.push('- Replace all `KVS_*` placeholder values with actual Azure Key Vault secret URIs');
   lines.push('- Run end-to-end tests with representative sample messages for each workflow');
   lines.push('- Set up Azure Monitor alerts for workflow failures');
+  lines.push('');
+  lines.push('**Testing options for Logic Apps Standard:**');
+  lines.push('');
+  lines.push('| Approach | When to use |');
+  lines.push('|---|---|');
+  lines.push('| **Generated test specs** (`tests/*.tests.json`) | Run with the Logic Apps test runner — no Azure required |');
+  lines.push('| **Microsoft unit testing NuGet** (`Microsoft.Azure.Workflows.UnitTesting`) | Local CI; mock individual actions without deploying |');
+  lines.push('| **IntegrationPlaybook testing framework** | Integration/smoke tests against deployed Azure instance |');
+  lines.push('');
+  lines.push('- Microsoft unit testing docs: https://learn.microsoft.com/azure/logic-apps/create-run-custom-code-functions');
+  lines.push('- IntegrationPlaybook framework: https://github.com/michaelstephensonuk/IntegrationPlaybook-LogicApp-Standard-Testing');
   if (hasOnPrem) {
     lines.push('- Install and register the On-premises Data Gateway for FILE/SQL connectors');
   }
