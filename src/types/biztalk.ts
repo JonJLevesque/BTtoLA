@@ -124,7 +124,8 @@ export type FunctoidCategory =
   | 'cumulative'
   | 'database'
   | 'advanced'
-  | 'scripting';
+  | 'scripting'
+  | 'custom';   // Third-party compiled DLL functoids (ID >= 10000)
 
 export interface BtmFunctoid {
   functoidId: number;

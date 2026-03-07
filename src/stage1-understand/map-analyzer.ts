@@ -47,7 +47,7 @@ const FUNCTOID_RANGES: Array<{ min: number; max: number; category: FunctoidCateg
   { min: 600,   max: 660,   category: 'scientific' },
   { min: 700,   max: 760,   category: 'cumulative' },
   { min: 900,   max: 970,   category: 'advanced'   },
-  { min: 10000, max: 99999, category: 'scripting'  },
+  { min: 10000, max: 99999, category: 'custom'     }, // Third-party compiled DLL functoids
 ];
 
 function classifyFunctoid(fid: number): FunctoidCategory {

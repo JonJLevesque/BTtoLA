@@ -193,6 +193,26 @@ const GAP_DEFS = {
     baseEffortDays: 0,
   },
 
+  customFunctoid: {
+    capability: 'Custom Third-Party Functoids (compiled DLL)',
+    severity: 'high' as RiskSeverity,
+    description:
+      'Functoid IDs ≥ 10000 are third-party compiled DLL functoids — not BizTalk built-ins and not ' +
+      'inline scripting. Common sources include the BizTalk Mapper Extensions UtilityPack and other ' +
+      'community or ISV libraries. These functoids contain compiled .NET code with no visible source ' +
+      'in the .btm file — behavior cannot be inferred from the map XML alone. Logic Apps has no ' +
+      'equivalent runtime for compiled functoid DLLs.',
+    mitigation:
+      'For each custom functoid: (1) identify the source DLL and namespace (visible in the .btm ' +
+      'FunctoidID + <ScriptFunctoid> elements); (2) locate the original assembly and read the source ' +
+      'code or documentation; (3) rewrite logic as standard XSLT functions, or extract to a Logic ' +
+      'Apps Local Code Function (.NET 8 isolated worker, runs in-process). ' +
+      'Common community functoids have direct XSLT equivalents — e.g. string padding → format-number(), ' +
+      'GUID generator → Logic Apps guid() expression, Base64 encoder → base64(). ' +
+      'Budget 0.5–2 days per unique custom functoid type.',
+    baseEffortDays: 3,
+  },
+
   multiPartMap: {
     capability: 'Multi-Part Maps (Multiple Source Schemas)',
     severity: 'high' as RiskSeverity,
@@ -455,6 +475,35 @@ const GAP_DEFS = {
 const ADAPTER_GAPS: Record<string, GapDefinition> = {
   'WCF-NetNamedPipe': GAP_DEFS.wcfNetNamedPipe,
   'WCF-NetTcp':       GAP_DEFS.wcfNetTcp,
+
+  // Azure Relay adapters
+  'WCF-BasicHttpRelay': {
+    capability: 'WCF-BasicHttpRelay Adapter (Azure Service Bus Relay)',
+    severity: 'medium' as RiskSeverity,
+    description:
+      'WCF-BasicHttpRelay routes traffic through Azure Service Bus Relay (now Azure Relay). ' +
+      'Logic Apps has no native Azure Relay connector — the relay endpoint is not directly addressable ' +
+      'from a Logic Apps HTTP action without additional infrastructure.',
+    mitigation:
+      'Option A: Replace Azure Relay with a direct HTTPS endpoint — deploy the on-premises service ' +
+      'behind an API Management gateway or Azure Application Gateway with a public endpoint. ' +
+      'Option B: Use the on-premises data gateway for direct on-premises connectivity from Logic Apps. ' +
+      'Option C: Re-expose the on-premises service via Azure Hybrid Connections (WebSocket-based, ' +
+      'no firewall changes required) and call it via HTTP action.',
+    baseEffortDays: 3,
+  },
+  'WCF-NetTcpRelay': {
+    capability: 'WCF-NetTcpRelay Adapter (Azure Service Bus Relay)',
+    severity: 'high' as RiskSeverity,
+    description:
+      'WCF-NetTcpRelay uses the binary TCP WCF binding tunnelled through Azure Service Bus Relay. ' +
+      'Logic Apps cannot speak the binary TCP WCF wire format and has no Azure Relay connector.',
+    mitigation:
+      'Same path as WCF-NetTcp: wrap the on-premises WCF endpoint in an Azure Function that speaks ' +
+      'HTTP to Logic Apps and binary TCP internally to the service. Alternatively, re-expose the ' +
+      'service as a REST/JSON endpoint and replace the relay with direct HTTPS + on-premises data gateway.',
+    baseEffortDays: 5,
+  },
 
   // SWIFT accelerator
   'SWIFT':            GAP_DEFS.swiftMt,
@@ -733,6 +782,12 @@ function mapGaps(map: ParsedMap): GapHit[] {
     });
   }
 
+  // Custom third-party DLL functoids (ID >= 10000)
+  const customFunctoids = map.functoids.filter(f => f.category === 'custom');
+  if (customFunctoids.length > 0) {
+    hits.push({ def: GAP_DEFS.customFunctoid, effortDelta: customFunctoids.length });
+  }
+
   if (map.hasDatabaseFunctoids) {
     hits.push({ def: GAP_DEFS.databaseFunctoid, effortDelta: 1 });
   }
@@ -763,8 +818,89 @@ function mapGaps(map: ParsedMap): GapHit[] {
   return hits;
 }
 
+// Known community pipeline component class name fragments → targeted gap descriptions.
+// These are well-documented components with known migration paths.
+const KNOWN_COMMUNITY_COMPONENTS: Array<{ fragment: string; note: string }> = [
+  {
+    fragment: 'JSONEncoder',
+    note: 'JSON encoding: replace with Logic Apps built-in JSON() expression or Liquid transform.',
+  },
+  {
+    fragment: 'JSONDecoder',
+    note: 'JSON decoding: replace with Logic Apps Parse JSON action using a generated schema.',
+  },
+  {
+    fragment: 'ZipDeflate',
+    note: 'ZIP/deflate compression: replace with Logic Apps Data Operations or Azure Function.',
+  },
+  {
+    fragment: 'ZipInflate',
+    note: 'ZIP/inflate decompression: replace with Azure Function (.NET DeflateStream).',
+  },
+  {
+    fragment: 'PdfDecoder',
+    note: 'PDF extraction: replace with Azure Function using a PDF parsing library (e.g. iText, PdfSharp).',
+  },
+  {
+    fragment: 'RemoveXmlNamespace',
+    note: 'Namespace removal: replace with an XSLT identity transform that strips namespace declarations.',
+  },
+  {
+    fragment: 'FlatFileDecoder',
+    note: 'Custom flat-file decoder: replace with Logic Apps Flat File Decode action or Azure Function for exact parity.',
+  },
+  {
+    fragment: 'FlatFileEncoder',
+    note: 'Custom flat-file encoder: replace with Logic Apps Flat File Encode action or Azure Function.',
+  },
+  {
+    fragment: 'Base64Encoder',
+    note: 'Base64 encoding: replace with Logic Apps base64() WDL expression — no custom component needed.',
+  },
+  {
+    fragment: 'Base64Decoder',
+    note: 'Base64 decoding: replace with Logic Apps base64ToString() WDL expression.',
+  },
+];
+
 function pipelineGaps(pipeline: ParsedPipeline): GapHit[] {
   if (!pipeline.hasCustomComponents) return [];
-  const customCount = pipeline.components.filter(c => c.isCustom).length;
-  return [{ def: GAP_DEFS.customPipelineComponent, effortDelta: customCount }];
+
+  const customComponents = pipeline.components.filter(c => c.isCustom);
+  const hits: GapHit[] = [];
+
+  for (const comp of customComponents) {
+    // Check if this is a known community component with a specific migration note
+    const known = KNOWN_COMMUNITY_COMPONENTS.find(k =>
+      comp.fullTypeName.includes(k.fragment) || comp.componentType.includes(k.fragment)
+    );
+
+    if (known) {
+      hits.push({
+        def: {
+          capability: `Custom Pipeline Component: ${comp.componentType}`,
+          severity: 'medium' as RiskSeverity,
+          description:
+            `The pipeline contains a known community custom component (${comp.fullTypeName}). ` +
+            'This component has no direct Logic Apps equivalent but has a documented migration path.',
+          mitigation: known.note,
+          baseEffortDays: 1,
+        },
+        effortDelta: 0,
+      });
+    }
+  }
+
+  // Roll up remaining unknown custom components into a single generic gap
+  const unknownCount = customComponents.filter(c =>
+    !KNOWN_COMMUNITY_COMPONENTS.some(k =>
+      c.fullTypeName.includes(k.fragment) || c.componentType.includes(k.fragment)
+    )
+  ).length;
+
+  if (unknownCount > 0) {
+    hits.push({ def: GAP_DEFS.customPipelineComponent, effortDelta: unknownCount });
+  }
+
+  return hits;
 }
