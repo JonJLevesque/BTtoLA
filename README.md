@@ -6,7 +6,7 @@ Point it at a folder of BizTalk files. Get back a ready-to-deploy Azure project,
 
 > **Why this exists**: Microsoft BizTalk Server reaches end of extended support in **October 2028**. Every organization running BizTalk must migrate before then. This tool makes that fast, systematic, and correct.
 
-🌐 **[biztalkmigrate.com](https://biztalkmigrate.com)** — get a free 3-day trial key, no credit card required
+🌐 **[biztalkmigrate.com](https://biztalkmigrate.com)** — join the waitlist for access
 
 ---
 
