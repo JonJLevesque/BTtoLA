@@ -98,8 +98,10 @@ export async function addToWaitlist(
 
 // ── Email delivery via Resend ─────────────────────────────────────────────────
 
-const FROM_ADDRESS = 'BizTalk Migrate <keys@biztalkmigrate.com>';
-const RESEND_API   = 'https://api.resend.com/emails';
+const FROM_ADDRESS       = 'BizTalk Migrate <keys@biztalkmigrate.com>';
+const RESEND_API         = 'https://api.resend.com/emails';
+const RESEND_CONTACTS    = 'https://api.resend.com/contacts';
+const RESEND_AUDIENCE_ID = '1c79463d-1590-4204-b885-43c5538eae4a';
 
 async function sendEmail(
   to: string,
@@ -165,6 +167,24 @@ export async function sendLicenseEmail(
   await sendEmail(to, subject, html, resendApiKey);
 }
 
+async function addToResendAudience(
+  email: string,
+  resendApiKey: string,
+): Promise<void> {
+  const res = await fetch(RESEND_CONTACTS, {
+    method:  'POST',
+    headers: {
+      'Authorization': `Bearer ${resendApiKey}`,
+      'Content-Type':  'application/json',
+    },
+    body: JSON.stringify({ email, audience_id: RESEND_AUDIENCE_ID }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    console.error(`[license-provisioner] Resend contacts error ${res.status}: ${body}`);
+  }
+}
+
 export async function sendWaitlistEmail(
   to: string,
   resendApiKey: string,
@@ -178,13 +198,16 @@ export async function sendWaitlistEmail(
   <div style="background:#1a1a2e; border:1px solid #16213e; border-radius:12px; padding:40px;">
     <h1 style="color:#60a5fa; margin:0 0 8px;">BizTalk Migrate</h1>
     <p style="color:#94a3b8; margin:0 0 32px; font-size:14px;">You're on the list</p>
-    <p style="margin:0 0 24px;">Thanks for signing up. We'll reach out when full license pricing is available.</p>
-    <p style="margin:0 0 24px; font-size:14px; color:#94a3b8;">In the meantime, grab a free 3-day trial key at <a href="https://biztalkmigrate.com" style="color:#60a5fa;">biztalkmigrate.com</a> and run your first migration today.</p>
+    <p style="margin:0 0 24px;">Got it — you're on the waitlist. We'll be in touch soon.</p>
+    <p style="margin:0 0 24px; font-size:14px; color:#94a3b8;">Questions? Just reply to this email.</p>
     <hr style="border:none; border-top:1px solid #1e293b; margin:32px 0;">
-    <p style="margin:0; font-size:13px; color:#64748b;">Questions? <a href="mailto:me@jonlevesque.com" style="color:#60a5fa;">me@jonlevesque.com</a></p>
+    <p style="margin:0; font-size:13px; color:#64748b;"><a href="https://biztalkmigrate.com" style="color:#60a5fa;">biztalkmigrate.com</a> &nbsp;·&nbsp; <a href="mailto:me@jonlevesque.com" style="color:#60a5fa;">me@jonlevesque.com</a></p>
   </div>
 </body>
 </html>`;
 
-  await sendEmail(to, subject, html, resendApiKey);
+  await Promise.all([
+    sendEmail(to, subject, html, resendApiKey),
+    addToResendAudience(to, resendApiKey),
+  ]);
 }
