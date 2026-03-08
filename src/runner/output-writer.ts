@@ -35,6 +35,7 @@
  *     connections.json
  *     host.json
  *     local.settings.json
+ *     parameters.json                 {} (workflow parameters, always present)
  *     {AppName}.code-workspace         single-root workspace (+ Functions folder if needed)
  *     arm-template.json / arm-parameters.json (if infrastructure included)
  *     tests/ {WorkflowName}.tests.json
@@ -72,6 +73,8 @@ export function writeOutput(options: WriteOptions): void {
   writeJson(join(outputDir, 'connections.json'), buildResult.project.connections);
   writeJson(join(outputDir, 'host.json'), buildResult.project.host);
   writeJson(join(outputDir, 'local.settings.json'), buildResult.localSettings);
+  // Logic Apps workflow parameters file (always present, even if empty)
+  writeJson(join(outputDir, 'parameters.json'), {});
 
   // ── Artifacts — always created (Maps, Rules, Schemas always present) ────────
   const mapsDir    = join(outputDir, 'Artifacts', 'Maps');
