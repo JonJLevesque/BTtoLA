@@ -179,7 +179,7 @@ export function buildPackage(
   const appSettings = { ...appConn.appSettings, ...intentConn.appSettings };
 
   // ── 4. Generate host.json ─────────────────────────────────────────────────
-  const host: HostJson = buildHostJson(app);
+  const host: HostJson = buildDefaultHostJson();
 
   // ── 5. Build LogicAppsProject ─────────────────────────────────────────────
   const project: LogicAppsProject = {
@@ -313,31 +313,6 @@ export function buildPackageFromIntent(
 }
 
 // ─── Host.json Builder ────────────────────────────────────────────────────────
-
-function buildHostJson(app: BizTalkApplication): HostJson {
-  const retentionDays = app.complexityClassification === 'simple' ? '30' : '90';
-
-  return {
-    version:         '2.0',
-    extensionBundle: {
-      id:      'Microsoft.Azure.Functions.ExtensionBundle.Workflows',
-      version: '[1.*, 2.0.0)',
-    },
-    extensions: {
-      workflow: {
-        settings: {
-          'Runtime.FlowRetentionDays': retentionDays,
-          'Runtime.Backend.FlowRunRetentionInDays': retentionDays,
-        },
-      },
-    },
-    logging: {
-      applicationInsights: {
-        samplingSettings: { isEnabled: true },
-      },
-    },
-  };
-}
 
 function buildDefaultHostJson(): HostJson {
   return {
