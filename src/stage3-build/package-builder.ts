@@ -452,27 +452,46 @@ function generateLocalCodeFunctionStub(
   originalExpression: string
 ): string {
   const exprComment = originalExpression
-    ? `        // Original BizTalk expression:\n        // ${originalExpression.split('\n').join('\n        // ')}`
-    : `        // TODO: implement transformation logic`;
+    ? originalExpression.split('\n').map(l => `            // ${l}`).join('\n')
+    : `            // TODO: implement transformation logic`;
 
-  return `using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.Functions.Worker.Extensions.Abstractions;
-using Newtonsoft.Json.Linq;
+  return `//------------------------------------------------------------
+// Copyright (c) Microsoft Corporation. All rights reserved.
+//------------------------------------------------------------
 
-namespace ${namespace}.Functions
+namespace ${namespace}
 {
+    using System.Threading.Tasks;
+    using Microsoft.Azure.Functions.Extensions.Workflows;
+    using Microsoft.Azure.WebJobs;
+    using Microsoft.Extensions.Logging;
+
     /// <summary>
     /// Local code function stub generated from BizTalk migration.
-    /// This function is called inline by the Logic Apps workflow.
+    /// Implement the body of Run() before deploying.
     /// </summary>
-    public static class ${functionName}
+    public class ${functionName}
     {
-        [Function("${functionName}")]
-        public static JObject Run(
-            [WorkflowActionTrigger] JObject requestBody)
+        private readonly ILogger<${functionName}> logger;
+
+        public ${functionName}(ILoggerFactory loggerFactory)
         {
+            logger = loggerFactory.CreateLogger<${functionName}>();
+        }
+
+        /// <summary>
+        /// Executes the logic app workflow action.
+        /// </summary>
+        [FunctionName("${functionName}")]
+        public Task<object> Run([WorkflowActionTrigger] object requestBody)
+        {
+            this.logger.LogInformation("${functionName}: starting.");
+
+            // Original BizTalk expression:
 ${exprComment}
-            return requestBody;
+
+            // TODO: implement transformation logic and return result
+            throw new System.NotImplementedException("Implement ${functionName} logic here.");
         }
     }
 }
