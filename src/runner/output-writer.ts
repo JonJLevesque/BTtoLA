@@ -9,13 +9,18 @@
  *       extensions.json        (recommended extensions)
  *     {WorkflowName}/
  *       workflow.json
+ *       workflow-designtime/   (empty — VS Code designer populates this on first open)
  *     Artifacts/
  *       Maps/
  *         {MapName}.xslt
  *         {MapName}.lml
+ *       Rules/                 (placeholder for migrated BRE .xml rule policies)
  *       Schemas/
  *         {SchemaName}.xsd
+ *     lib/                     (local NuGet packages / DLL references for code functions)
  *     {FunctionName}.cs        (local code function stubs)
+ *     .funcignore              (Azure Functions deploy exclusions)
+ *     .gitignore               (standard Logic Apps Standard .gitignore)
  *     connections.json
  *     host.json
  *     local.settings.json
@@ -52,6 +57,9 @@ export function writeOutput(options: WriteOptions): void {
     const wfDir = join(outputDir, wf.name);
     ensureDir(wfDir);
     writeJson(join(wfDir, 'workflow.json'), wf.workflow);
+    // workflow-designtime/ is populated by the VS Code Logic Apps extension on first open.
+    // Creating the directory here ensures the project structure matches the reference template.
+    ensureDir(join(wfDir, 'workflow-designtime'));
   }
 
   // ── Root project files ──────────────────────────────────────────────────────
@@ -101,6 +109,18 @@ export function writeOutput(options: WriteOptions): void {
       }
     }
   }
+
+  // ── Artifacts/Rules/ — placeholder for migrated BRE rule policies ───────────
+  ensureDir(join(outputDir, 'Artifacts', 'Rules'));
+
+  // ── lib/ — local NuGet packages / DLL references for code functions ──────────
+  ensureDir(join(outputDir, 'lib'));
+
+  // ── .funcignore — Azure Functions deployment exclusions ──────────────────────
+  writeFileSync(join(outputDir, '.funcignore'), FUNCIGNORE_CONTENT, 'utf-8');
+
+  // ── .gitignore ────────────────────────────────────────────────────────────────
+  writeFileSync(join(outputDir, '.gitignore'), GITIGNORE_CONTENT, 'utf-8');
 
   // ── Local code function stubs ────────────────────────────────────────────────
   if (buildResult.localCodeFunctions && Object.keys(buildResult.localCodeFunctions).length > 0) {
@@ -153,3 +173,25 @@ function ensureDir(dir: string): void {
 function writeJson(filePath: string, data: unknown): void {
   writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
+
+// ─── Static file templates ─────────────────────────────────────────────────────
+
+const FUNCIGNORE_CONTENT = `\
+.debug
+.vscode
+local.settings.json
+tests/
+migration-report.md
+migration-report.html
+*.code-workspace
+`;
+
+const GITIGNORE_CONTENT = `\
+bin/
+obj/
+.vs/
+local.settings.json
+workflow-designtime/
+.debug/
+`;
+
