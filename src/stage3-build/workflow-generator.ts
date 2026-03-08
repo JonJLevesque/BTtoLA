@@ -453,13 +453,24 @@ function buildActions(
   nameMap: Map<string, string>
 ): Record<string, WdlAction> {
   const actions: Record<string, WdlAction> = {};
+  let prevActionName: string | undefined;
 
   for (const step of steps) {
     const actionName = nameMap.get(step.id) ?? step.id;
-    const runAfter   = buildRunAfter(step.runAfter, nameMap);
-    const action     = buildStep(step, nameMap, runAfter);
 
+    // BizTalk orchestrations are sequential by default. If a step has no explicit
+    // runAfter dependencies declared in the intent, chain it after the previous action.
+    // This prevents unintended parallel execution. Only the first action gets runAfter:{}.
+    let runAfter: RunAfterMap;
+    if ((!step.runAfter || step.runAfter.length === 0) && prevActionName !== undefined) {
+      runAfter = { [prevActionName]: ['SUCCEEDED'] };
+    } else {
+      runAfter = buildRunAfter(step.runAfter, nameMap);
+    }
+
+    const action = buildStep(step, nameMap, runAfter);
     actions[actionName] = action;
+    prevActionName = actionName;
   }
 
   return actions;
