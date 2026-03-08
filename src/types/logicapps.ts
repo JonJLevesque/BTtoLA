@@ -384,7 +384,7 @@ export interface HostJson {
   };
   logging?: {
     applicationInsights?: {
-      samplingSettings?: { isEnabled: boolean };
+      samplingSettings?: { isEnabled: boolean; excludedTypes?: string };
     };
   };
 }

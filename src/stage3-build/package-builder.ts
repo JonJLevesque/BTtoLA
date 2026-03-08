@@ -200,7 +200,8 @@ export function buildPackage(
   const armParameters = buildArmParameters(appName, plan.architectureRecommendation.integrationAccountTier);
 
   // ── 7. Generate local.settings.json ──────────────────────────────────────
-  const localSettings = generateLocalSettings(appSettings);
+  // Defer until after step 10 so we know whether C# functions exist.
+  // (moved below localCodeFunctions computation — see step 10a)
 
   // ── 8. Generate tests ─────────────────────────────────────────────────────
   const testSpecs: Record<string, string> = {};
@@ -233,6 +234,10 @@ export function buildPackage(
       `Implement custom logic in the .cs files before deploying.`
     );
   }
+
+  // ── 10a. Generate local.settings.json (now that we know if C# functions exist) ──
+  const hasLocalCodeFunctions = Object.keys(localCodeFunctions).some(k => k.endsWith('.cs'));
+  const localSettings = generateLocalSettings(appSettings, hasLocalCodeFunctions);
 
   const summary: BuildSummary = {
     workflowCount:     workflows.length,
@@ -316,7 +321,15 @@ export function buildPackageFromIntent(
 
 function buildDefaultHostJson(): HostJson {
   return {
-    version:         '2.0',
+    version: '2.0',
+    logging: {
+      applicationInsights: {
+        samplingSettings: {
+          isEnabled:     true,
+          excludedTypes: 'Request',
+        },
+      },
+    },
     extensionBundle: {
       id:      'Microsoft.Azure.Functions.ExtensionBundle.Workflows',
       version: '[1.*, 2.0.0)',

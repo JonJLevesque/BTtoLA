@@ -138,12 +138,10 @@ export function writeOutput(options: WriteOptions): void {
       'utf-8',
     );
 
-    // .vscode for the C# project
+    // .vscode for the C# project — matches reference (Empty_Function/.vscode/)
     const fvsDir = join(functionsDir, '.vscode');
     ensureDir(fvsDir);
-    writeJson(join(fvsDir, 'extensions.json'), {
-      recommendations: ['ms-azuretools.vscode-azurelogicapps'],
-    });
+    writeJson(join(fvsDir, 'extensions.json'), FUNCTIONS_VSCODE_EXTENSIONS);
     writeJson(join(fvsDir, 'settings.json'), FUNCTIONS_VSCODE_SETTINGS);
     writeJson(join(fvsDir, 'tasks.json'), FUNCTIONS_VSCODE_TASKS);
 
@@ -273,6 +271,7 @@ function generateLaunchJson(appName: string, hasCustomCode: boolean): Record<str
           : `Run/Debug ${appName}`,
         type: 'logicapp',
         request: 'launch',
+        isCodeless: true,
         ...(hasCustomCode ? { funcRuntime: 'coreclr', customCodeRuntime: 'clr' } : {}),
       },
     ],
@@ -313,9 +312,22 @@ const VSCODE_TASKS = {
   ],
 };
 
+const FUNCTIONS_VSCODE_EXTENSIONS = {
+  recommendations: [
+    'ms-azuretools.vscode-azurefunctions',
+    'ms-dotnettools.csharp',
+  ],
+};
+
 const FUNCTIONS_VSCODE_SETTINGS: Record<string, unknown> = {
-  'azureFunctions.deploySubpath':   '.',
-  'azureFunctions.suppressProject': false,
+  'azureFunctions.deploySubpath':              'bin/Release/net472/publish',
+  'azureFunctions.projectLanguage':            'C#',
+  'azureFunctions.projectRuntime':             '~4',
+  'debug.internalConsoleOptions':              'neverOpen',
+  'azureFunctions.preDeployTask':              'publish (functions)',
+  'azureFunctions.templateFilter':             'Core',
+  'azureFunctions.showTargetFrameworkWarning': false,
+  'azureFunctions.projectSubpath':             'bin\\Release\\net472\\publish',
 };
 
 const FUNCTIONS_VSCODE_TASKS = {
@@ -323,11 +335,10 @@ const FUNCTIONS_VSCODE_TASKS = {
   tasks: [
     {
       label: 'build',
-      command: 'dotnet',
+      command: '${config:azureLogicAppsStandard.dotnetBinaryPath}',
       type: 'process',
       args: ['build', '${workspaceFolder}'],
       group: { kind: 'build', isDefault: true },
-      problemMatcher: '$msCompile',
     },
   ],
 };
