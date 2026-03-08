@@ -115,15 +115,19 @@ export function generateLocalSettings(
   return {
     IsEncrypted: false,
     Values: {
-      AzureWebJobsStorage:        'UseDevelopmentStorage=true',
-      // FIX-07/11: Logic Apps Standard targets .NET 8 isolated worker model, not in-process.
-      // 'dotnet-isolated' is required for Local Code Functions and Data Mapper support.
-      // AzureWebJobsFeatureFlags enables Data Mapper local testing (prevents "undefined. undefined" error).
-      FUNCTIONS_WORKER_RUNTIME:   'dotnet-isolated',
-      FUNCTIONS_EXTENSION_VERSION: '~4',
-      AzureWebJobsFeatureFlags:   'EnableMultiLanguageWorker',
-      APP_KIND:                   'workflowapp',
-      WEBSITE_NODE_DEFAULT_VERSION: '~18',
+      AzureWebJobsStorage:           'UseDevelopmentStorage=true',
+      // Logic Apps Standard uses the Node.js worker runtime (the LA workflow engine).
+      // Local Code Functions run alongside via customCodeRuntime: 'clr' in the launch config.
+      FUNCTIONS_WORKER_RUNTIME:      'node',
+      FUNCTIONS_INPROC_NET8_ENABLED: '1',
+      APP_KIND:                      'workflowapp',
+      AzureWebJobsFeatureFlags:      'EnableMultiLanguageWorker',
+      WORKFLOWS_MANAGEMENT_BASE_URI: 'https://management.azure.com/',
+      // Fill in the following values for local development with the designer:
+      // WORKFLOWS_TENANT_ID:          '<your-azure-tenant-id>',
+      // WORKFLOWS_SUBSCRIPTION_ID:    '<your-azure-subscription-id>',
+      // WORKFLOWS_RESOURCE_GROUP_NAME: '<your-resource-group>',
+      // WORKFLOWS_LOCATION_NAME:      '<azure-region e.g. westeurope>',
       ...Object.fromEntries(
         Object.entries(appSettings).map(([k]) => [k, `<set-in-azure-app-settings-or-keyvault>`])
       ),
