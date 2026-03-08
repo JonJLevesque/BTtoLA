@@ -1,46 +1,44 @@
 /**
  * Output Writer — Write BuildResult + migration-report to disk
  *
- * Produces a Logic Apps Standard project matching the reference template:
+ * Produces a Logic Apps Standard project matching the reference template.
+ * The output directory IS the Logic Apps project root (flat structure).
+ * If local code functions are present, the C# project lives in a sibling subfolder.
  *
- *   {outputDir}/
- *     {AppName}.code-workspace         references LA project + Functions project
- *     migration-report.md / .html      migration-specific output at root
- *     {AppName}/                       ← Logic Apps Standard project
- *       .funcignore
- *       .gitignore
- *       .vscode/
- *         extensions.json
- *         launch.json                  debug config (custom code runtime)
- *         settings.json
- *         tasks.json                   generateDebugSymbols + func host start
- *       Artifacts/
- *         Maps/   {name}.xslt / .lml
- *         Rules/  (placeholder for migrated BRE rule policies)
- *         Schemas/ {name}.xsd
- *       lib/
- *         custom/
- *           net472/
- *             extensions.json          {"extensions":[]}
- *           {FunctionName}/
- *             function.json            binding descriptor per local code function
- *       workflow-designtime/           at LA project ROOT — VS Code designer files
- *         host.json
- *         local.settings.json
- *       {WorkflowName}/
- *         workflow.json
- *       connections.json
+ *   {outputDir}/                       ← Logic Apps Standard project root
+ *     .funcignore
+ *     .gitignore
+ *     .vscode/
+ *       extensions.json
+ *       launch.json                    debug config (supports custom code runtime)
+ *       settings.json
+ *       tasks.json                     generateDebugSymbols + func host start
+ *     Artifacts/
+ *       Maps/   {name}.xslt / .lml
+ *       Rules/  (placeholder for migrated BRE rule policies)
+ *       Schemas/ {name}.xsd
+ *     lib/
+ *       custom/
+ *         net472/
+ *           extensions.json            {"extensions":[]}
+ *         {FunctionName}/
+ *           function.json              binding descriptor per local code function
+ *     workflow-designtime/             required by VS Code Logic Apps extension for designer
  *       host.json
  *       local.settings.json
- *       arm-template.json / arm-parameters.json (if infrastructure included)
- *       tests/ {WorkflowName}.tests.json
- *     {AppName}-Functions/             ← C# project (only if local code functions)
+ *     {WorkflowName}/
+ *       workflow.json
+ *     {AppName}-Functions/             C# project (only if local code functions exist)
  *       {FunctionName}.cs
  *       {AppName}-Functions.csproj
  *       .vscode/
- *         extensions.json
- *         settings.json
- *         tasks.json
+ *     connections.json
+ *     host.json
+ *     local.settings.json
+ *     {AppName}.code-workspace         single-root workspace (+ Functions folder if needed)
+ *     arm-template.json / arm-parameters.json (if infrastructure included)
+ *     tests/ {WorkflowName}.tests.json
+ *     migration-report.md / .html
  */
 
 import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'fs';
@@ -63,43 +61,34 @@ export function writeOutput(options: WriteOptions): void {
 
   ensureDir(outputDir);
 
-  // ── Logic Apps Standard project directory ─────────────────────────────────
-  const laDir = join(outputDir, appName);
-  ensureDir(laDir);
-
   // ── Workflows ──────────────────────────────────────────────────────────────
   for (const wf of buildResult.project.workflows) {
-    const wfDir = join(laDir, wf.name);
+    const wfDir = join(outputDir, wf.name);
     ensureDir(wfDir);
     writeJson(join(wfDir, 'workflow.json'), wf.workflow);
   }
 
-  // ── Root LA project files ──────────────────────────────────────────────────
-  writeJson(join(laDir, 'connections.json'), buildResult.project.connections);
-  writeJson(join(laDir, 'host.json'), buildResult.project.host);
-  writeJson(join(laDir, 'local.settings.json'), buildResult.localSettings);
+  // ── Root project files ─────────────────────────────────────────────────────
+  writeJson(join(outputDir, 'connections.json'), buildResult.project.connections);
+  writeJson(join(outputDir, 'host.json'), buildResult.project.host);
+  writeJson(join(outputDir, 'local.settings.json'), buildResult.localSettings);
 
-  // ── Maps ───────────────────────────────────────────────────────────────────
-  const hasXslt = Object.keys(buildResult.project.xsltMaps).length > 0;
-  const hasLml  = Object.keys(buildResult.project.lmlMaps).length > 0;
-  if (hasXslt || hasLml) {
-    const mapsDir = join(laDir, 'Artifacts', 'Maps');
-    ensureDir(mapsDir);
-    for (const [name, content] of Object.entries(buildResult.project.xsltMaps)) {
-      writeFileSync(join(mapsDir, name), content, 'utf-8');
-    }
-    for (const [name, content] of Object.entries(buildResult.project.lmlMaps)) {
-      writeFileSync(join(mapsDir, name), content, 'utf-8');
-    }
+  // ── Artifacts — always created (Maps, Rules, Schemas always present) ────────
+  const mapsDir    = join(outputDir, 'Artifacts', 'Maps');
+  const rulesDir   = join(outputDir, 'Artifacts', 'Rules');
+  const schemasDir = join(outputDir, 'Artifacts', 'Schemas');
+  ensureDir(mapsDir);
+  ensureDir(rulesDir);
+  ensureDir(schemasDir);
+
+  for (const [name, content] of Object.entries(buildResult.project.xsltMaps)) {
+    writeFileSync(join(mapsDir, name), content, 'utf-8');
+  }
+  for (const [name, content] of Object.entries(buildResult.project.lmlMaps)) {
+    writeFileSync(join(mapsDir, name), content, 'utf-8');
   }
 
-  // Artifacts/Rules — placeholder for migrated BRE rule policies
-  ensureDir(join(laDir, 'Artifacts', 'Rules'));
-
-  // ── XSD Schemas ───────────────────────────────────────────────────────────
   if (buildResult.schemaFiles && buildResult.schemaFiles.length > 0) {
-    const schemasDir = join(laDir, 'Artifacts', 'Schemas');
-    ensureDir(schemasDir);
     for (const schemaPath of buildResult.schemaFiles) {
       try {
         copyFileSync(schemaPath, join(schemasDir, basename(schemaPath)));
@@ -109,23 +98,20 @@ export function writeOutput(options: WriteOptions): void {
     }
   }
 
-  // ── workflow-designtime — at LA project ROOT (NOT inside workflow dirs) ────
-  // This directory is required by the VS Code Logic Apps Standard extension for
-  // the workflow designer to function. It has its own host.json + local.settings.json
-  // with the WorkflowOperationDiscoveryHostMode flag.
-  const wdDir = join(laDir, 'workflow-designtime');
+  // ── workflow-designtime — at project ROOT ──────────────────────────────────
+  // Required by the VS Code Logic Apps Standard extension for the workflow
+  // designer. Must have its own host.json + local.settings.json.
+  const wdDir = join(outputDir, 'workflow-designtime');
   ensureDir(wdDir);
   writeJson(join(wdDir, 'host.json'), WORKFLOW_DESIGNTIME_HOST);
   writeJson(join(wdDir, 'local.settings.json'), WORKFLOW_DESIGNTIME_LOCAL_SETTINGS);
 
   // ── lib/custom structure ───────────────────────────────────────────────────
-  // lib/custom/net472/ holds compiled DLL output from the -Functions C# project.
-  // extensions.json is the Azure Functions extension manifest (starts empty).
-  const net472Dir = join(laDir, 'lib', 'custom', 'net472');
+  const net472Dir = join(outputDir, 'lib', 'custom', 'net472');
   ensureDir(net472Dir);
   writeJson(join(net472Dir, 'extensions.json'), { extensions: [] });
 
-  // ── Local code functions + C# project ─────────────────────────────────────
+  // ── Local code functions → sibling C# project ─────────────────────────────
   const localFunctions = buildResult.localCodeFunctions ?? {};
   const functionFileNames = Object.keys(localFunctions).filter(k => k.endsWith('.cs'));
   const functionNames = functionFileNames.map(k => k.replace(/\.cs$/, ''));
@@ -135,17 +121,17 @@ export function writeOutput(options: WriteOptions): void {
     const functionsDir = join(outputDir, functionsProjectName);
     ensureDir(functionsDir);
 
-    // .cs stubs in C# project
+    // .cs stubs
     for (const [fileName, content] of Object.entries(localFunctions)) {
       if (fileName.endsWith('.cs')) {
         writeFileSync(join(functionsDir, fileName), content, 'utf-8');
       }
     }
 
-    // .csproj — references back to the LA project folder via <LogicAppFolder>
+    // .csproj — <LogicAppFolder> points to parent (the LA project root)
     writeFileSync(
       join(functionsDir, `${functionsProjectName}.csproj`),
-      generateCsproj(appName),
+      generateCsproj('..'),
       'utf-8',
     );
 
@@ -158,31 +144,34 @@ export function writeOutput(options: WriteOptions): void {
     writeJson(join(fvsDir, 'settings.json'), FUNCTIONS_VSCODE_SETTINGS);
     writeJson(join(fvsDir, 'tasks.json'), FUNCTIONS_VSCODE_TASKS);
 
-    // lib/custom/{functionName}/function.json — Azure Functions binding descriptor
+    // lib/custom/{functionName}/function.json — binding descriptor
     for (const functionName of functionNames) {
-      const fnDescDir = join(laDir, 'lib', 'custom', functionName);
+      const fnDescDir = join(outputDir, 'lib', 'custom', functionName);
       ensureDir(fnDescDir);
-      writeJson(join(fnDescDir, 'function.json'), generateFunctionJson(functionsProjectName, functionName));
+      writeJson(
+        join(fnDescDir, 'function.json'),
+        generateFunctionJson(functionsProjectName, functionName),
+      );
     }
   }
 
   // ── ARM Infrastructure ─────────────────────────────────────────────────────
   if (buildResult.armTemplate && Object.keys(buildResult.armTemplate).length > 0) {
-    writeJson(join(laDir, 'arm-template.json'), buildResult.armTemplate);
-    writeJson(join(laDir, 'arm-parameters.json'), buildResult.armParameters);
+    writeJson(join(outputDir, 'arm-template.json'), buildResult.armTemplate);
+    writeJson(join(outputDir, 'arm-parameters.json'), buildResult.armParameters);
   }
 
   // ── Test specs ─────────────────────────────────────────────────────────────
   if (buildResult.testSpecs && Object.keys(buildResult.testSpecs).length > 0) {
-    const testsDir = join(laDir, 'tests');
+    const testsDir = join(outputDir, 'tests');
     ensureDir(testsDir);
     for (const [name, content] of Object.entries(buildResult.testSpecs)) {
       writeFileSync(join(testsDir, name), String(content), 'utf-8');
     }
   }
 
-  // ── .vscode/ in LA project ─────────────────────────────────────────────────
-  const vscodeDir = join(laDir, '.vscode');
+  // ── .vscode/ ───────────────────────────────────────────────────────────────
+  const vscodeDir = join(outputDir, '.vscode');
   ensureDir(vscodeDir);
   writeJson(join(vscodeDir, 'extensions.json'), {
     recommendations: ['ms-azuretools.vscode-azurelogicapps'],
@@ -191,13 +180,14 @@ export function writeOutput(options: WriteOptions): void {
   writeJson(join(vscodeDir, 'launch.json'), generateLaunchJson(appName, functionNames.length > 0));
   writeJson(join(vscodeDir, 'tasks.json'), VSCODE_TASKS);
 
-  // ── .funcignore and .gitignore ─────────────────────────────────────────────
-  writeFileSync(join(laDir, '.funcignore'), FUNCIGNORE_CONTENT, 'utf-8');
-  writeFileSync(join(laDir, '.gitignore'), GITIGNORE_CONTENT, 'utf-8');
+  // ── .funcignore / .gitignore ───────────────────────────────────────────────
+  writeFileSync(join(outputDir, '.funcignore'), FUNCIGNORE_CONTENT, 'utf-8');
+  writeFileSync(join(outputDir, '.gitignore'), GITIGNORE_CONTENT, 'utf-8');
 
-  // ── code-workspace (at outputDir root, references both projects) ────────────
+  // ── code-workspace ─────────────────────────────────────────────────────────
+  // Single-root when no functions; multi-root when C# functions project exists.
   const workspaceFolders: Array<{ name: string; path: string }> = [
-    { name: appName, path: `./${appName}` },
+    { name: appName, path: '.' },
   ];
   if (functionNames.length > 0) {
     workspaceFolders.push({
@@ -212,7 +202,7 @@ export function writeOutput(options: WriteOptions): void {
     },
   });
 
-  // ── Migration report (at outputDir root) ──────────────────────────────────
+  // ── Migration report ───────────────────────────────────────────────────────
   writeFileSync(join(outputDir, 'migration-report.md'), migrationReport, 'utf-8');
   writeFileSync(
     join(outputDir, 'migration-report.html'),
@@ -233,8 +223,7 @@ function writeJson(filePath: string, data: unknown): void {
   writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
-// ─── workflow-designtime content ───────────────────────────────────────────────
-// Required by the VS Code Logic Apps Standard extension for the workflow designer.
+// ─── workflow-designtime ───────────────────────────────────────────────────────
 
 const WORKFLOW_DESIGNTIME_HOST = {
   version: '2.0',
@@ -264,10 +253,10 @@ const WORKFLOW_DESIGNTIME_LOCAL_SETTINGS = {
 
 function generateVscodeSettings(): Record<string, unknown> {
   return {
-    'azureLogicAppsStandard.projectLanguage':   'JavaScript',
-    'azureLogicAppsStandard.projectRuntime':    '~4',
-    'debug.internalConsoleOptions':             'neverOpen',
-    'azureFunctions.suppressProject':            true,
+    'azureLogicAppsStandard.projectLanguage': 'JavaScript',
+    'azureLogicAppsStandard.projectRuntime':  '~4',
+    'debug.internalConsoleOptions':           'neverOpen',
+    'azureFunctions.suppressProject':          true,
   };
 }
 
@@ -276,7 +265,9 @@ function generateLaunchJson(appName: string, hasCustomCode: boolean): Record<str
     version: '0.2.0',
     configurations: [
       {
-        name: `Run/Debug logic app${hasCustomCode ? ' with local function ' + appName : ' ' + appName}`,
+        name: hasCustomCode
+          ? `Run/Debug logic app with local function ${appName}`
+          : `Run/Debug ${appName}`,
         type: 'logicapp',
         request: 'launch',
         ...(hasCustomCode ? { funcRuntime: 'coreclr', customCodeRuntime: 'clr' } : {}),
@@ -338,9 +329,9 @@ const FUNCTIONS_VSCODE_TASKS = {
   ],
 };
 
-// ─── C# project generator ─────────────────────────────────────────────────────
+// ─── C# project generators ────────────────────────────────────────────────────
 
-function generateCsproj(logicAppFolderName: string): string {
+function generateCsproj(logicAppRelativePath: string): string {
   return `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>false</IsPackable>
@@ -348,7 +339,7 @@ function generateCsproj(logicAppFolderName: string): string {
     <AzureFunctionsVersion>v4</AzureFunctionsVersion>
     <OutputType>Library</OutputType>
     <PlatformTarget>x64</PlatformTarget>
-    <LogicAppFolder>${logicAppFolderName}</LogicAppFolder>
+    <LogicAppFolder>${logicAppRelativePath}</LogicAppFolder>
     <CopyToOutputDirectory>Always</CopyToOutputDirectory>
   </PropertyGroup>
 
@@ -362,7 +353,7 @@ function generateCsproj(logicAppFolderName: string): string {
 
   <Target Name="CleanCustomLib" AfterTargets="Compile">
     <ItemGroup>
-      <DirsToClean Include="..\\$(LogicAppFolder)\\lib\\custom" />
+      <DirsToClean Include="$(LogicAppFolder)\\lib\\custom" />
     </ItemGroup>
     <RemoveDir Directories="@(DirsToClean)" />
   </Target>
@@ -374,18 +365,18 @@ function generateCsproj(logicAppFolderName: string): string {
       <CopyFiles2 Include="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\*.*" />
     </ItemGroup>
     <Copy SourceFiles="@(CopyFiles)"
-          DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\%(RecursiveDir)"
+          DestinationFolder="$(LogicAppFolder)\\lib\\custom\\%(RecursiveDir)"
           SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(CopyFiles2)"
-          DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\net472\\"
+          DestinationFolder="$(LogicAppFolder)\\lib\\custom\\net472\\"
           SkipUnchangedFiles="true" />
     <ItemGroup>
-      <MoveFiles Include="..\\$(LogicAppFolder)\\lib\\custom\\bin\\*.*" />
+      <MoveFiles Include="$(LogicAppFolder)\\lib\\custom\\bin\\*.*" />
     </ItemGroup>
     <Move SourceFiles="@(MoveFiles)"
-          DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\net472" />
+          DestinationFolder="$(LogicAppFolder)\\lib\\custom\\net472" />
     <ItemGroup>
-      <DirsToClean2 Include="..\\$(LogicAppFolder)\\lib\\custom\\bin" />
+      <DirsToClean2 Include="$(LogicAppFolder)\\lib\\custom\\bin" />
     </ItemGroup>
     <RemoveDir Directories="@(DirsToClean2)" />
   </Target>
@@ -396,8 +387,6 @@ function generateCsproj(logicAppFolderName: string): string {
 </Project>
 `;
 }
-
-// ─── function.json binding descriptor ────────────────────────────────────────
 
 function generateFunctionJson(namespace: string, functionName: string): Record<string, unknown> {
   return {
@@ -435,7 +424,7 @@ function generateFunctionJson(namespace: string, functionName: string): Record<s
   };
 }
 
-// ─── Static file templates ─────────────────────────────────────────────────────
+// ─── Static templates ─────────────────────────────────────────────────────────
 
 const FUNCIGNORE_CONTENT = `\
 .debug
