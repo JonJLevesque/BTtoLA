@@ -27,6 +27,7 @@
  *   - Deployed directly via ARM template deployment
  */
 
+import { basename } from 'node:path';
 import type {
   LogicAppsProject,
   WorkflowJson,
@@ -97,22 +98,43 @@ export function buildPackage(
   const appName = options.appName ?? sanitizeAppName(app.name);
   const warnings: string[] = [];
 
-  // ── 1. Generate workflows (one per orchestration) ─────────────────────────
+  // ── 1. Generate workflows (one per orchestration .odx file) ──────────────
+  // Every .odx file generates a workflow — even if the internal class name is shared.
+  // When class names collide, the filename (without extension) is used as the
+  // workflow name so each file gets its own distinct workflow.
   const workflows: LogicAppsProject['workflows'] = [];
-  const seenOrchNames = new Set<string>();
+  const seenOrchClassNames = new Set<string>();  // tracks class name collisions
+  const usedWorkflowNames  = new Set<string>();  // tracks final workflow name uniqueness
   for (const orch of app.orchestrations) {
-    if (seenOrchNames.has(orch.name)) {
-      warnings.push(`Skipped duplicate orchestration "${orch.name}" (likely a backup copy — remove the duplicate .odx file)`);
-      continue;
-    }
-    seenOrchNames.add(orch.name);
     const orchIntent = buildOrchestrationIntent(intent, orch.name);
-    // FIX-10: Sanitize workflow names — must start with letter, no consecutive separators
-    const workflowName = sanitizeWorkflowName(orch.name);
+
+    // Derive workflow name: prefer class name; fall back to filename on collision
+    let workflowName: string;
+    if (!seenOrchClassNames.has(orch.name)) {
+      workflowName = sanitizeWorkflowName(orch.name);
+      seenOrchClassNames.add(orch.name);
+    } else {
+      // Class name already used — derive from the .odx filename to keep both workflows
+      const filenameBase = orch.filePath ? basename(orch.filePath, '.odx') : `${orch.name}_2`;
+      workflowName = sanitizeWorkflowName(filenameBase);
+      warnings.push(
+        `Orchestration class "${orch.name}" appears in multiple .odx files. ` +
+        `Using filename-derived name "${workflowName}" for ${orch.filePath ?? 'unknown file'}.`
+      );
+    }
+
+    // Handle (rare) final name collision after filename fallback
+    if (usedWorkflowNames.has(workflowName)) {
+      let counter = 2;
+      while (usedWorkflowNames.has(`${workflowName}_${counter}`)) counter++;
+      workflowName = `${workflowName}_${counter}`;
+    }
+    usedWorkflowNames.add(workflowName);
+
     const wf = generateWorkflow(orchIntent, {
       workflowName,
-      kind:         'Stateful',
-      wrapInScope:  options.wrapInScope ?? true,
+      kind:        'Stateful',
+      wrapInScope: options.wrapInScope ?? true,
     });
     workflows.push({ name: workflowName, workflow: wf });
   }
