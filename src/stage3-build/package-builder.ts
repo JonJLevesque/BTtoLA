@@ -36,9 +36,9 @@ import type {
   RunAfterMap,
   WdlAction,
 } from '../types/logicapps.js';
-import type { IntegrationIntent, IntegrationStep } from '../shared/integration-intent.js';
+import type { IntegrationIntent, IntegrationStep, IntegrationTrigger, TriggerType } from '../shared/integration-intent.js';
 import { createIntegrationIntent } from '../shared/integration-intent.js';
-import type { BizTalkApplication, ParsedPipeline, BtpComponent } from '../types/biztalk.js';
+import type { BizTalkApplication, ParsedPipeline, BtpComponent, ReceiveLocation } from '../types/biztalk.js';
 import type { MigrationResult } from '../types/migration.js';
 import { generateWorkflow }              from './workflow-generator.js';
 import { convertMap }                    from './map-converter.js';
@@ -98,15 +98,104 @@ export function buildPackage(
   const appName = options.appName ?? sanitizeAppName(app.name);
   const warnings: string[] = [];
 
-  // ── 1. Generate workflows (one per orchestration .odx file) ──────────────
-  // Every .odx file generates a workflow — even if the internal class name is shared.
-  // When class names collide, the filename (without extension) is used as the
-  // workflow name so each file gets its own distinct workflow.
+  // ── Workflow Generation Strategy ──────────────────────────────────────────
+  // Sandro Pereira's architecture:
+  //   When a receive location uses a non-default pipeline (flat file decode,
+  //   archiving, custom actions), create a RECEIVER WORKFLOW that owns the
+  //   adapter trigger, runs the pipeline logic, then calls the orchestration
+  //   workflow via the native Call Workflow action.
+  //
+  //   Orchestration workflows then get a Request trigger (they're called, not triggered).
+  //
+  //   When no bindings are present (export from BizTalk had no BindingInfo.xml),
+  //   pipelines become standalone Request-triggered workflows (best-effort, no wiring).
   const workflows: LogicAppsProject['workflows'] = [];
-  const seenOrchClassNames = new Set<string>();  // tracks class name collisions
-  const usedWorkflowNames  = new Set<string>();  // tracks final workflow name uniqueness
+  const usedWorkflowNames  = new Set<string>();  // tracks all workflow name uniqueness
+  const handledPipelineNames = new Set<string>(); // pipelines handled as receiver workflows
+  let receiverWorkflowCount = 0;
+
+  // ── 1a. Generate RECEIVER workflows ──────────────────────────────────────
+  // Condition: bindings exist AND the receive location uses a non-default pipeline
+  const hasBindings = app.bindingFiles.some(b => b.receiveLocations.length > 0);
+  if (hasBindings && app.pipelines.length > 0) {
+    for (const binding of app.bindingFiles) {
+      for (const rl of binding.receiveLocations) {
+        // Find a matching custom pipeline by name (short or fully-qualified)
+        const pipeline = app.pipelines.find(
+          p => p.name === rl.pipelineName ||
+               p.className === rl.pipelineName ||
+               rl.pipelineName.endsWith(`.${p.name}`)
+        );
+        if (!pipeline) continue; // default pipeline (XMLReceive, PassThru, etc.) — no receiver workflow needed
+
+        // Build pipeline processing steps + final Call Orchestration step
+        const pipelineSteps = buildPipelineSteps(pipeline);
+
+        // Find the target orchestration name — first orchestration is the best-effort match
+        const targetOrchName = sanitizeWorkflowName(app.orchestrations[0]?.name ?? 'MainOrchestration');
+        pipelineSteps.push({
+          id: 'step_call_orchestration',
+          type: 'invoke-child',
+          description: `Call orchestration: ${targetOrchName}`,
+          actionType: 'Workflow',
+          config: { workflowName: targetOrchName },
+          runAfter: [],
+        });
+
+        const receiverIntent = createIntegrationIntent('biztalk-migration', {
+          trigger:       buildAdapterTrigger(rl),
+          steps:         pipelineSteps,
+          errorHandling: { strategy: 'terminate' },
+          systems:       [],
+          dataFormats: { input: detectFormatFromComponents(pipeline), output: 'xml' },
+          patterns:      [],
+          metadata: {
+            source:                   'biztalk-migration',
+            complexity:               'simple',
+            estimatedActions:         pipelineSteps.length + 2,
+            requiresIntegrationAccount: false,
+            requiresOnPremGateway:    false,
+          },
+        });
+
+        let workflowName = sanitizeWorkflowName(`Rcv_${rl.name}`);
+        if (usedWorkflowNames.has(workflowName)) {
+          let c = 2;
+          while (usedWorkflowNames.has(`${workflowName}_${c}`)) c++;
+          workflowName = `${workflowName}_${c}`;
+        }
+        usedWorkflowNames.add(workflowName);
+
+        const wf = generateWorkflow(receiverIntent, {
+          workflowName,
+          kind:        'Stateful',
+          wrapInScope: options.wrapInScope ?? true,
+        });
+        // Receiver workflows are entry points (adapter trigger) — no Response action needed
+        workflows.push({ name: workflowName, workflow: wf });
+        handledPipelineNames.add(pipeline.name);
+        receiverWorkflowCount++;
+      }
+    }
+  }
+
+  // ── 1b. Generate ORCHESTRATION workflows ──────────────────────────────────
+  // Every .odx file generates a workflow. When receiver workflows were generated,
+  // orchestrations get a Request trigger (they're called by receiver workflows).
+  // When class names collide, use the filename to differentiate.
+  const seenOrchClassNames = new Set<string>();
   for (const orch of app.orchestrations) {
     const orchIntent = buildOrchestrationIntent(intent, orch.name);
+
+    // Override trigger when receiver workflows exist — orchestration is now a child
+    if (receiverWorkflowCount > 0) {
+      orchIntent.trigger = {
+        type:      'webhook',
+        source:    'Called by receive location workflow',
+        connector: 'request',
+        config:    {},
+      };
+    }
 
     // Derive workflow name: prefer class name; fall back to filename on collision
     let workflowName: string;
@@ -114,7 +203,6 @@ export function buildPackage(
       workflowName = sanitizeWorkflowName(orch.name);
       seenOrchClassNames.add(orch.name);
     } else {
-      // Class name already used — derive from the .odx filename to keep both workflows
       const filenameBase = orch.filePath ? basename(orch.filePath, '.odx') : `${orch.name}_2`;
       workflowName = sanitizeWorkflowName(filenameBase);
       warnings.push(
@@ -123,7 +211,6 @@ export function buildPackage(
       );
     }
 
-    // Handle (rare) final name collision after filename fallback
     if (usedWorkflowNames.has(workflowName)) {
       let counter = 2;
       while (usedWorkflowNames.has(`${workflowName}_${counter}`)) counter++;
@@ -136,34 +223,42 @@ export function buildPackage(
       kind:        'Stateful',
       wrapInScope: options.wrapInScope ?? true,
     });
+    // Orchestrations are called as children by receiver workflows — ensure Response action
+    if (receiverWorkflowCount > 0) {
+      ensureResponseAction(wf, warnings);
+    }
     workflows.push({ name: workflowName, workflow: wf });
   }
 
-  // ── 1b. Generate pipeline workflows (one per .btp pipeline file) ────────────
-  // Sandro's architecture: each pipeline is a reusable standalone workflow with a
-  // Request trigger. Orchestration workflows call pipeline workflows when needed.
-  const pipelineWorkflowNames: string[] = [];
+  // ── 1c. Generate STANDALONE PIPELINE workflows ────────────────────────────
+  // For pipelines NOT matched to any receive location (e.g., no BindingInfo.xml).
+  // These are reusable Request-triggered workflows the developer can call manually.
   const seenPipelineNames = new Set<string>();
   for (const pipeline of app.pipelines) {
+    if (handledPipelineNames.has(pipeline.name)) continue; // already generated as receiver workflow
     if (seenPipelineNames.has(pipeline.name)) {
       warnings.push(`Skipped duplicate pipeline "${pipeline.name}"`);
       continue;
     }
     seenPipelineNames.add(pipeline.name);
     const pipelineIntent = buildPipelineIntent(pipeline);
-    const workflowName = sanitizeWorkflowName(`Pipeline_${pipeline.name}`);
+    let workflowName = sanitizeWorkflowName(`Pipeline_${pipeline.name}`);
+    if (usedWorkflowNames.has(workflowName)) {
+      let c = 2;
+      while (usedWorkflowNames.has(`${workflowName}_${c}`)) c++;
+      workflowName = `${workflowName}_${c}`;
+    }
+    usedWorkflowNames.add(workflowName);
     const wf = generateWorkflow(pipelineIntent, {
       workflowName,
       kind:        'Stateful',
       wrapInScope: options.wrapInScope ?? true,
     });
-    // Pipeline workflows are always called as children — ensure Response action
-    ensureResponseAction(wf, warnings);
+    ensureResponseAction(wf, warnings); // standalone pipeline workflows are called as children
     workflows.push({ name: workflowName, workflow: wf });
-    pipelineWorkflowNames.push(workflowName);
   }
 
-  // If no orchestrations, generate a single workflow from the intent
+  // If still no workflows at all, generate a single workflow from the intent
   if (workflows.length === 0) {
     const wf = generateWorkflow(intent, {
       workflowName: appName,
@@ -450,6 +545,108 @@ function buildOrchestrationIntent(
 }
 
 
+// ─── Receiver Workflow Helpers ────────────────────────────────────────────────
+
+/** Adapter type → connector + trigger type mapping (mirrors intent-constructor.ts) */
+const RECEIVER_ADAPTER_MAP: Record<string, { connector: string; triggerType: TriggerType }> = {
+  'FILE':             { connector: 'azureblob',   triggerType: 'polling' },
+  'FTP':              { connector: 'ftp',          triggerType: 'polling' },
+  'SFTP':             { connector: 'sftp',         triggerType: 'polling' },
+  'HTTP':             { connector: 'request',      triggerType: 'webhook' },
+  'HTTPS':            { connector: 'request',      triggerType: 'webhook' },
+  'SOAP':             { connector: 'request',      triggerType: 'webhook' },
+  'WCF-BasicHttp':    { connector: 'request',      triggerType: 'webhook' },
+  'WCF-WSHttp':       { connector: 'request',      triggerType: 'webhook' },
+  'WCF-NetMsmq':      { connector: 'serviceBus',  triggerType: 'polling' },
+  'MSMQ':             { connector: 'serviceBus',  triggerType: 'polling' },
+  'SB-Messaging':     { connector: 'serviceBus',  triggerType: 'polling' },
+  'EventHubs':        { connector: 'eventhub',    triggerType: 'polling' },
+  'SQL':              { connector: 'sql',          triggerType: 'polling' },
+  'AzureBlob':        { connector: 'azureblob',   triggerType: 'polling' },
+  'AzureQueue':       { connector: 'azurequeue',  triggerType: 'polling' },
+  'SFTP-Custom':      { connector: 'sftp',         triggerType: 'polling' },
+  'SAP':              { connector: 'sap',          triggerType: 'polling' },
+};
+
+function isOnPremAdapter(adapterType: string, address?: string): boolean {
+  if (['SQL', 'Oracle', 'SAP', 'SharePoint', 'MQSeries', 'WebSphere MQ'].includes(adapterType)) return true;
+  if (adapterType === 'FILE' && address && (address.match(/^[A-Za-z]:\\/) || address.startsWith('\\\\') || address.startsWith('/'))) return true;
+  return false;
+}
+
+/**
+ * Builds an IntegrationTrigger from a BizTalk receive location.
+ * Used when generating receiver workflows that own the adapter trigger.
+ */
+function buildAdapterTrigger(rl: ReceiveLocation): IntegrationTrigger {
+  const adapterType = rl.adapterType;
+  const mapping = RECEIVER_ADAPTER_MAP[adapterType] ?? { connector: 'request', triggerType: 'webhook' as TriggerType };
+  const onPrem = isOnPremAdapter(adapterType, rl.address);
+
+  const config: Record<string, unknown> = {};
+
+  if (adapterType === 'FILE' && !onPrem) {
+    const parts = rl.address.replace(/\\/g, '/').split('/').filter(Boolean);
+    const containerName = parts.slice(0, -1).pop()?.toLowerCase().replace(/[^a-z0-9-]/g, '-') ?? 'input';
+    config['containerName'] = containerName;
+    config['blobMatchingCondition'] = { matchWildcardPattern: rl.adapterProperties['FileMask'] ?? '*.xml' };
+    const pollingMs = parseInt(rl.adapterProperties['PollingInterval'] ?? '60000', 10);
+    config['recurrence'] = { frequency: 'Minute', interval: Math.max(1, Math.round(pollingMs / 60000)) };
+  } else if (['SB-Messaging', 'WCF-NetMsmq', 'MSMQ'].includes(adapterType)) {
+    const rawName = rl.address.split('/').pop() ?? 'messages';
+    config['entityName'] = rawName.toLowerCase().replace(/[^a-z0-9-_.]/g, '-');
+    config['receiveMode'] = 'peekLock';
+  } else if (adapterType === 'SQL') {
+    config['query'] = rl.adapterProperties['PollingStatement'] ?? 'TODO: set polling query';
+  }
+
+  return {
+    type:      mapping.triggerType,
+    source:    `${adapterType} — ${rl.address}`,
+    connector: onPrem ? (mapping.connector === 'azureblob' ? 'filesystem' : mapping.connector) : mapping.connector,
+    config,
+  };
+}
+
+/**
+ * Builds the pipeline processing steps from a ParsedPipeline.
+ * Shared between buildPipelineIntent() and receiver workflow generation.
+ */
+function buildPipelineSteps(pipeline: ParsedPipeline): IntegrationStep[] {
+  const steps: IntegrationStep[] = [];
+  let stepIndex = 0;
+
+  for (const component of pipeline.components) {
+    stepIndex++;
+    const stepId = `step_pipeline_${stepIndex}`;
+    if (component.isCustom) {
+      steps.push({
+        id: stepId,
+        type: 'invoke-function',
+        description: `Custom pipeline component: ${component.fullTypeName}`,
+        actionType: 'InvokeFunction',
+        config: { functionName: component.componentType || 'CustomPipelineComponent', expression: component.fullTypeName },
+        runAfter: [],
+      });
+    } else {
+      steps.push(mapPipelineComponentToAction(component, stepId));
+    }
+  }
+
+  if (steps.length === 0) {
+    steps.push({
+      id: 'step_passthrough',
+      type: 'set-variable',
+      description: 'Pass-through: forward message unchanged',
+      actionType: 'Compose',
+      config: { value: '@triggerBody()' },
+      runAfter: [],
+    });
+  }
+
+  return steps;
+}
+
 // ─── Pipeline Workflow Builder ────────────────────────────────────────────────
 
 /**
@@ -533,40 +730,7 @@ function detectFormatFromComponents(pipeline: ParsedPipeline): 'xml' | 'json' | 
  * allows re-use across orchestrations without duplication.
  */
 function buildPipelineIntent(pipeline: ParsedPipeline): IntegrationIntent {
-  const steps: IntegrationStep[] = [];
-  let stepIndex = 0;
-
-  for (const component of pipeline.components) {
-    stepIndex++;
-    const stepId = `step_pipeline_${stepIndex}`;
-
-    if (component.isCustom) {
-      // Custom (third-party) component → generate InvokeFunction stub
-      steps.push({
-        id: stepId,
-        type: 'invoke-function',
-        description: `Custom pipeline component: ${component.fullTypeName}`,
-        actionType: 'InvokeFunction',
-        config: { functionName: component.componentType || 'CustomPipelineComponent', expression: component.fullTypeName },
-        runAfter: [],
-      });
-    } else {
-      steps.push(mapPipelineComponentToAction(component, stepId));
-    }
-  }
-
-  // Default/empty pipelines get a simple pass-through step
-  if (steps.length === 0) {
-    steps.push({
-      id: 'step_passthrough',
-      type: 'set-variable',
-      description: 'Pass-through: forward message unchanged',
-      actionType: 'Compose',
-      config: { value: '@triggerBody()' },
-      runAfter: [],
-    });
-  }
-
+  const steps = buildPipelineSteps(pipeline);
   const format = detectFormatFromComponents(pipeline);
 
   return createIntegrationIntent('biztalk-migration', {
