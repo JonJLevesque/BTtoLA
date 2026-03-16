@@ -751,7 +751,9 @@ function buildLoopAction(
 /**
  * Inverts a simple XLANG/s binary condition for use in a WDL Until expression.
  * BizTalk: while(cond) → Logic Apps: Until(!cond)
- * Returns the inverted WDL JSON predicate string, or null if unparseable.
+ *
+ * Until expressions are WDL INLINE STRINGS — "@lessOrEquals(a, b)" — NOT JSON
+ * predicate objects. JSON predicates are only valid inside If action expressions.
  *
  * Inversion table:
  *   ==  → not(equals)        !=  → equals
@@ -761,33 +763,31 @@ function buildLoopAction(
 function invertXlangCondition(expr: string): string | null {
   const trimmed = expr.trim();
 
-  // Try compound: &&
+  // Try compound: && → De Morgan: NOT(A && B) = NOT(A) || NOT(B)
   if (trimmed.includes('&&')) {
     const parts = splitTopLevel(trimmed, '&&');
     if (parts) {
-      const inverted = parts.map(p => invertXlangCondition(p.trim())).filter(Boolean);
+      const inverted = parts.map(p => invertXlangCondition(p.trim())).filter(Boolean) as string[];
       if (inverted.length === parts.length) {
-        // De Morgan: NOT(A && B) = NOT(A) || NOT(B)
-        return `@{json('{\"or\":[${inverted.map(i => i as string).join(',')}]}')}`;
+        return `@or(${inverted.join(', ')})`;
       }
     }
   }
 
-  // Try compound: ||
+  // Try compound: || → De Morgan: NOT(A || B) = NOT(A) && NOT(B)
   if (trimmed.includes('||')) {
     const parts = splitTopLevel(trimmed, '||');
     if (parts) {
-      const inverted = parts.map(p => invertXlangCondition(p.trim())).filter(Boolean);
+      const inverted = parts.map(p => invertXlangCondition(p.trim())).filter(Boolean) as string[];
       if (inverted.length === parts.length) {
-        // De Morgan: NOT(A || B) = NOT(A) && NOT(B)
-        return `@{json('{\"and\":[${inverted.map(i => i as string).join(',')}]}')}`;
+        return `@and(${inverted.join(', ')})`;
       }
     }
   }
 
   // Try simple binary comparison
   const OPS: [string, string][] = [
-    ['>=', 'less'], ['<=', 'greater'], ['==', 'not_equals'],
+    ['>=', 'less'], ['<=', 'greater'], ['==', 'not'],
     ['!=', 'equals'], ['>', 'lessOrEquals'], ['<', 'greaterOrEquals'],
   ];
 
@@ -798,16 +798,32 @@ function invertXlangCondition(expr: string): string | null {
     const rhs = trimmed.slice(idx + op.length).trim();
     if (!lhs || !rhs) continue;
 
-    const wdlLhs = `@{${lhs}}`;
-    const wdlRhs = isNumeric(rhs) ? Number(rhs) : rhs.replace(/^["']|["']$/g, '');
+    // Convert bare variable names → variables('name') WDL accessor
+    const wdlLhs = toWdlRef(lhs);
+    const wdlRhs = isNumeric(rhs) ? rhs : `'${rhs.replace(/^["']|["']$/g, '')}'`;
 
-    if (wdlFn === 'not_equals') {
-      return `@{json('{\"not\":{\"equals\":[\"${wdlLhs}\",\"${wdlRhs}\"]}}')}`;
+    // Until expression = WDL inline function string, e.g. "@lessOrEquals(x, y)"
+    if (wdlFn === 'not') {
+      return `@not(equals(${wdlLhs}, ${wdlRhs}))`;
     }
-    return `@{json('{\"${wdlFn}\":[\"${wdlLhs}\",${JSON.stringify(wdlRhs)}]}')}`;
+    return `@${wdlFn}(${wdlLhs}, ${wdlRhs})`;
   }
 
   return null;
+}
+
+/**
+ * Converts a bare XLANG/s variable reference to its WDL equivalent.
+ * Simple identifiers → variables('name')
+ * Already-qualified WDL refs (@{...} or triggerBody...) → pass through
+ */
+function toWdlRef(expr: string): string {
+  const s = expr.trim();
+  // Already a WDL expression — pass through
+  if (s.startsWith('@') || s.startsWith('triggerBody') || s.startsWith('variables(')) return s;
+  // Simple identifier — treat as workflow variable
+  if (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(s)) return `variables('${s}')`;
+  return s;
 }
 
 function isNumeric(s: string): boolean {
