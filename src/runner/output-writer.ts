@@ -238,10 +238,10 @@ export function writeOutput(options: WriteOptions): void {
       }
     }
 
-    // .csproj — <LogicAppFolder> points to sibling Logic Apps project dir
+    // .csproj — matches SampleLogicApps/Empty exactly; LogicAppFolder = sibling folder name
     writeFileSync(
       join(functionsDir, `${functionsProjectName}.csproj`),
-      generateCsproj(`../${appName}`),
+      generateCsproj(appName),
       'utf-8',
     );
 
@@ -265,7 +265,7 @@ export function writeOutput(options: WriteOptions): void {
       ensureDir(fnDescDir);
       writeJson(
         join(fnDescDir, 'function.json'),
-        generateFunctionJson(functionsNamespace, functionName),
+        generateFunctionJson(functionsNamespace, functionName, functionsProjectName),
       );
     }
 
@@ -288,7 +288,12 @@ export function writeOutput(options: WriteOptions): void {
   writeJson(join(outputDir, `${appName}.code-workspace`), {
     folders: workspaceFolders,
     settings: {
-      'azureLogicAppsStandard.showAutoTriggerKey': true,
+      'terminal.integrated.env.windows': {
+        PATH: '${env:USERPROFILE}\\.azurelogicapps\\dependencies\\DotNetSDK;${env:PATH}',
+      },
+      'omnisharp.dotNetCliPaths': [
+        '${env:USERPROFILE}\\.azurelogicapps\\dependencies\\DotNetSDK',
+      ],
     },
   });
 
@@ -435,7 +440,9 @@ const FUNCTIONS_VSCODE_TASKS = {
 
 // ─── C# project generators ────────────────────────────────────────────────────
 
-function generateCsproj(logicAppRelativePath: string): string {
+function generateCsproj(appName: string): string {
+  // Match SampleLogicApps/Empty/empty-workspace/Empty_Function/Empty_Function.csproj exactly.
+  // LogicAppFolder is just the sibling folder name; all target paths use ..\$(LogicAppFolder).
   return `<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>false</IsPackable>
@@ -443,9 +450,9 @@ function generateCsproj(logicAppRelativePath: string): string {
     <AzureFunctionsVersion>v4</AzureFunctionsVersion>
     <OutputType>Library</OutputType>
     <PlatformTarget>x64</PlatformTarget>
-    <LogicAppFolder>${logicAppRelativePath}</LogicAppFolder>
+    <LogicAppFolder>${appName}</LogicAppFolder>
     <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-  </PropertyGroup>
+ </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Azure.WebJobs.Core" Version="3.0.39" />
@@ -455,44 +462,42 @@ function generateCsproj(logicAppRelativePath: string): string {
     <PackageReference Include="Microsoft.Extensions.Logging" Version="2.1.1" />
   </ItemGroup>
 
-  <Target Name="CleanCustomLib" AfterTargets="Compile">
+<Target Name="Task" AfterTargets="Compile">
     <ItemGroup>
-      <DirsToClean Include="$(LogicAppFolder)\\lib\\custom" />
-    </ItemGroup>
-    <RemoveDir Directories="@(DirsToClean)" />
-  </Target>
+        <DirsToClean2 Include="..\\$(LogicAppFolder)\\lib\\custom" />
+      </ItemGroup>
+      <RemoveDir Directories="@(DirsToClean2)" />
+ </Target>
 
   <Target Name="CopyExtensionFiles" AfterTargets="ParameterizedFunctionJsonGenerator">
     <ItemGroup>
-      <CopyFiles Include="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\**\\*.*"
-                 Exclude="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\*.*" />
+        <CopyFiles Include="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\**\\*.*" CopyToOutputDirectory="PreserveNewest" Exclude="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\*.*" />
       <CopyFiles2 Include="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\*.*" />
     </ItemGroup>
-    <Copy SourceFiles="@(CopyFiles)"
-          DestinationFolder="$(LogicAppFolder)\\lib\\custom\\%(RecursiveDir)"
-          SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(CopyFiles2)"
-          DestinationFolder="$(LogicAppFolder)\\lib\\custom\\net472\\"
-          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(CopyFiles)" DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\%(RecursiveDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(CopyFiles2)" DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\net472\\" SkipUnchangedFiles="true" />
     <ItemGroup>
-      <MoveFiles Include="$(LogicAppFolder)\\lib\\custom\\bin\\*.*" />
+        <MoveFiles Include="..\\$(LogicAppFolder)\\lib\\custom\\bin\\*.*" />
     </ItemGroup>
-    <Move SourceFiles="@(MoveFiles)"
-          DestinationFolder="$(LogicAppFolder)\\lib\\custom\\net472" />
+
+   <Move SourceFiles="@(MoveFiles)" DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\net472" />
     <ItemGroup>
-      <DirsToClean2 Include="$(LogicAppFolder)\\lib\\custom\\bin" />
-    </ItemGroup>
-    <RemoveDir Directories="@(DirsToClean2)" />
+       <DirsToClean Include="..\\$(LogicAppFolder)\\lib\\custom\\bin" />
+     </ItemGroup>
+       <RemoveDir Directories="@(DirsToClean)" />
   </Target>
 
   <ItemGroup>
-    <Reference Include="Microsoft.CSharp" />
+      <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="bin\\$(Configuration)\\net472\\" />
   </ItemGroup>
 </Project>
 `;
 }
 
-function generateFunctionJson(namespace: string, functionName: string): Record<string, unknown> {
+function generateFunctionJson(namespace: string, functionName: string, assemblyName: string): Record<string, unknown> {
   // FIX-2: Add InputSchema, Trigger, Cardinality, Raw fields — matches canonical function.json
   // from Sample LogicApps/las-training 2/LAS-Training/lib/custom/test/function.json
   const binding = {
@@ -509,7 +514,7 @@ function generateFunctionJson(namespace: string, functionName: string): Record<s
   };
   return {
     Name: null,
-    ScriptFile: `../bin/${functionName}.dll`,
+    ScriptFile: `../net472/${assemblyName}.dll`,
     FunctionDirectory: null,
     EntryPoint: `${namespace}.${functionName}.Run`,
     Language: 'net472',

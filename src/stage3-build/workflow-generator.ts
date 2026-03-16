@@ -528,9 +528,7 @@ function buildTransformAction(step: IntegrationStep, runAfter: RunAfterMap): Tra
       type: actionType as 'FlatFileDecoding' | 'FlatFileEncoding',
       inputs: {
         content: (cfg['content'] as string) ?? '@triggerBody()',
-        integrationAccount: {
-          schema: { name: (cfg['schemaName'] as string) ?? 'TODO_flat_file_schema' },
-        },
+        schema: { name: (cfg['schemaName'] as string) ?? 'TODO_flat_file_schema' },
       },
       runAfter,
     } as unknown as TransformAction;
