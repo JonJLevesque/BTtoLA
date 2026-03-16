@@ -175,7 +175,7 @@ const GAP_DEFS = {
       'Option A (preferred): Rewrite as standard XSLT templates using built-in XSLT string/math ' +
       'functions (normalize-space, substring, translate). Option B: Extract to a Logic Apps Local ' +
       'Code Function (runs in-process, no separate service, .NET 6+ syntax). ' +
-      'Each non-XSLT scripting functoid requires individual analysis; budget 0.5–1 day per unique script.',
+      'Each non-XSLT scripting functoid requires individual analysis.',
     baseEffortDays: 3,
   },
 
@@ -208,8 +208,7 @@ const GAP_DEFS = {
       'code or documentation; (3) rewrite logic as standard XSLT functions, or extract to a Logic ' +
       'Apps Local Code Function (.NET 8 isolated worker, runs in-process). ' +
       'Common community functoids have direct XSLT equivalents — e.g. string padding → format-number(), ' +
-      'GUID generator → Logic Apps guid() expression, Base64 encoder → base64(). ' +
-      'Budget 0.5–2 days per unique custom functoid type.',
+      'GUID generator → Logic Apps guid() expression, Base64 encoder → base64().',
     baseEffortDays: 3,
   },
 
@@ -225,8 +224,7 @@ const GAP_DEFS = {
       'Before the Transform action: (1) fetch each additional source document via SQL connector, ' +
       'HTTP action, or variable; (2) use a Compose action to build a merged XML document combining ' +
       'all source data under a single root element; (3) pass the merged document as the single ' +
-      'Transform input. The XSLT selects from each source using its namespace prefix. ' +
-      'Budget 1-2 days per additional source schema.',
+      'Transform input. The XSLT selects from each source using its namespace prefix.',
     baseEffortDays: 2,
   },
 
@@ -242,8 +240,7 @@ const GAP_DEFS = {
     mitigation:
       'In the generated XSLT, rewrite count(/absolute/path) inside xsl:for-each blocks to use ' +
       'relative XPath: count(Child) instead of count(/Root/Parent/Child). If the absolute path ' +
-      'cannot be rewritten without schema analysis, flag for manual review. ' +
-      'Budget 0.5 days per map containing this pattern.',
+      'cannot be rewritten without schema analysis, flag for manual review.',
     baseEffortDays: 1,
   },
 
@@ -259,8 +256,7 @@ const GAP_DEFS = {
     mitigation:
       'Scan the destination schema XSD for elements with default= or fixed= attributes. For each, ' +
       'add an explicit <xsl:choose><xsl:when>...</xsl:when><xsl:otherwise>{default-value}' +
-      '</xsl:otherwise></xsl:choose> pattern in the XSLT. ' +
-      'Budget 0.5-1 day per map with schema defaults.',
+      '</xsl:otherwise></xsl:choose> pattern in the XSLT.',
     baseEffortDays: 1,
   },
 
@@ -275,8 +271,7 @@ const GAP_DEFS = {
     mitigation:
       'Scan generated XSLT for <xsl:sort> elements that lack data-type="number" on fields with ' +
       'numeric-sounding names (Id, Amount, Count, Total, Price, Quantity, Number, Sequence). ' +
-      'Add data-type="number" where numeric sort is intended. ' +
-      'Budget 0.25 days per map with sorting.',
+      'Add data-type="number" where numeric sort is intended.',
     baseEffortDays: 1,
   },
 
@@ -430,8 +425,7 @@ const GAP_DEFS = {
       'Required: Microsoft Host Integration Server (HIS) or Azure Logic Apps on-premises data gateway ' +
       'with HIS Transaction Integrator (TI). Deploy an Azure Function that wraps the HIS TI COM+ component ' +
       'and exposes it as an HTTP endpoint; call from Logic Apps via HTTP action. ' +
-      'Alternatively, work with the mainframe team to expose CICS programs as REST APIs via IBM z/OS Connect. ' +
-      'Budget significant effort for mainframe coordination and TI metadata regeneration.',
+      'Alternatively, work with the mainframe team to expose CICS programs as REST APIs via IBM z/OS Connect.',
     baseEffortDays: 15,
   },
 
@@ -446,8 +440,7 @@ const GAP_DEFS = {
       'Same path as CICS: Host Integration Server (HIS) + Transaction Integrator (TI) wrapped in ' +
       'an Azure Function, exposed as HTTP. Alternatively, expose IMS programs via IBM IMS Connect ' +
       'and access via TCP socket from an Azure Function. ' +
-      'Coordinate with mainframe operations team — IMS metadata (PCBs, DBDs) must be re-imported into HIS TI. ' +
-      'Budget significant effort for mainframe coordination.',
+      'Coordinate with mainframe operations team — IMS metadata (PCBs, DBDs) must be re-imported into HIS TI.',
     baseEffortDays: 15,
   },
 

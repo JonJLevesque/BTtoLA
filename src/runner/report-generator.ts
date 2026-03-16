@@ -247,7 +247,7 @@ export function generateMigrationReport(input: ReportInput): string {
     lines.push('');
   } else {
     const totalEffort = gaps.reduce((sum, g) => sum + (g.estimatedEffortDays ?? 0), 0);
-    lines.push(`${gaps.length} gap(s) identified. Estimated total manual effort: **~${totalEffort} day(s)**.`);
+    lines.push(`${gaps.length} gap(s) identified.`);
     lines.push('');
 
     if (criticalGaps.length > 0) {
@@ -256,7 +256,7 @@ export function generateMigrationReport(input: ReportInput): string {
       for (const gap of criticalGaps) {
         lines.push(`**${gap.capability}**`);
         if (gap.description) lines.push(gap.description);
-        lines.push(`*Mitigation:* ${gap.mitigation}${gap.estimatedEffortDays ? ` *(~${gap.estimatedEffortDays}d)*` : ''}`);
+        lines.push(`*Mitigation:* ${gap.mitigation}`);
         lines.push('');
       }
     }
@@ -267,7 +267,7 @@ export function generateMigrationReport(input: ReportInput): string {
       for (const gap of highGaps) {
         lines.push(`**${gap.capability}**`);
         if (gap.description) lines.push(gap.description);
-        lines.push(`*Mitigation:* ${gap.mitigation}${gap.estimatedEffortDays ? ` *(~${gap.estimatedEffortDays}d)*` : ''}`);
+        lines.push(`*Mitigation:* ${gap.mitigation}`);
         lines.push('');
       }
     }
@@ -278,7 +278,7 @@ export function generateMigrationReport(input: ReportInput): string {
       for (const gap of mediumGaps) {
         lines.push(`**${gap.capability}**`);
         if (gap.description) lines.push(gap.description);
-        lines.push(`*Mitigation:* ${gap.mitigation}${gap.estimatedEffortDays ? ` *(~${gap.estimatedEffortDays}d)*` : ''}`);
+        lines.push(`*Mitigation:* ${gap.mitigation}`);
         lines.push('');
       }
     }
