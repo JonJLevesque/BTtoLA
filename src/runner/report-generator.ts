@@ -341,6 +341,7 @@ export function generateMigrationReport(input: ReportInput): string {
   lines.push(`${outputDir}/`);
   lines.push(`  ${appName}.code-workspace     ← open this in VS Code`);
   lines.push(`  ${appName}/                   ← Logic Apps project`);
+  lines.push(`  ${appName}_Infra/             ← Infrastructure-as-code (ARM / Bicep / Terraform)`);
   if (hasFunctions) {
     lines.push(`  ${appName}_Functions/        ← C# Functions project`);
   }
@@ -597,8 +598,8 @@ export function generateMigrationReport(input: ReportInput): string {
   lines.push('```');
   lines.push(`Right-click the "${appName}" subfolder (not the workspace root) → "Deploy to Logic App..."`);
   lines.push('```');
-  lines.push(`> The workspace root contains \`${appName}.code-workspace\`, \`${appName}/\`, and \`${appName}_Functions/\`.`);
-  lines.push(`> Deploy from the \`${appName}/\` folder only — that is the Logic Apps project.`);
+  lines.push(`> The workspace root contains \`${appName}.code-workspace\`, \`${appName}/\` (Logic Apps), \`${appName}_Infra/\` (ARM/Terraform), and optionally \`${appName}_Functions/\` (C#).`);
+  lines.push(`> Deploy from the \`${appName}/\` folder only — that is the Logic Apps project. Use \`${appName}_Infra/\` for infrastructure provisioning.`);
   lines.push('');
   lines.push('**Option B — Azure CLI:**');
   lines.push('```bash');

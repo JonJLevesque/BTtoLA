@@ -43,7 +43,7 @@ import type { MigrationResult } from '../types/migration.js';
 import { generateWorkflow }              from './workflow-generator.js';
 import { convertMap }                    from './map-converter.js';
 import { generateConnectionsFromApp, generateConnectionsFromIntent } from './connection-generator.js';
-import { generateArmTemplate, generateLocalSettings } from './infrastructure-generator.js';
+import { generateArmTemplate, generateBicepTemplate, generateTerraformFiles, generateLocalSettings } from './infrastructure-generator.js';
 import { generateTestSpec, generateMsTestScaffold }  from './test-spec-generator.js';
 import { isComplexCSharpCall, extractMethodCallInfo } from './csharp-translator.js';
 
@@ -64,6 +64,8 @@ export interface BuildResult {
   project:         LogicAppsProject;
   armTemplate:     Record<string, unknown>;
   armParameters:   Record<string, unknown>;
+  bicepTemplate:   string;
+  terraformFiles:  Record<string, string>;
   localSettings:   Record<string, unknown>;
   testSpecs:       Record<string, string>;  // filename → content (JSON or .cs)
   warnings:        string[];
@@ -358,12 +360,15 @@ export function buildPackage(
     lmlMaps,
   };
 
-  // ── 6. Generate ARM template ──────────────────────────────────────────────
+  // ── 6. Generate infrastructure templates (ARM + Bicep + Terraform) ───────
+  const arch = plan.architectureRecommendation;
   const armTemplate = options.includeInfrastructure !== false
-    ? generateArmTemplate(plan.architectureRecommendation) as unknown as Record<string, unknown>
+    ? generateArmTemplate(arch) as unknown as Record<string, unknown>
     : {} as Record<string, unknown>;
 
-  const armParameters = buildArmParameters(appName, plan.architectureRecommendation.integrationAccountTier);
+  const armParameters  = buildArmParameters(appName, arch.integrationAccountTier);
+  const bicepTemplate  = options.includeInfrastructure !== false ? generateBicepTemplate(arch)  : '';
+  const terraformFiles = options.includeInfrastructure !== false ? generateTerraformFiles(arch)  : {};
 
   // ── 7. Generate local.settings.json ──────────────────────────────────────
   // Defer until after step 10 so we know whether C# functions exist.
@@ -419,7 +424,7 @@ export function buildPackage(
     warnings:          warnings.length,
   };
 
-  return { project, armTemplate, armParameters, localSettings, testSpecs, warnings, schemaFiles: [], localCodeFunctions, summary };
+  return { project, armTemplate, armParameters, bicepTemplate, terraformFiles, localSettings, testSpecs, warnings, schemaFiles: [], localCodeFunctions, summary };
 }
 
 /**
@@ -468,9 +473,11 @@ export function buildPackageFromIntent(
     testSpecs[`${appName}Tests.cs`]    = generateMsTestScaffold(spec, appName);
   }
 
-  // Minimal ARM template for greenfield
+  // Minimal infra for greenfield (no arch recommendation available)
   const armTemplate    = {} as Record<string, unknown>;
   const armParameters  = buildArmParameters(appName);
+  const bicepTemplate  = '';
+  const terraformFiles = {} as Record<string, string>;
   const localSettings  = generateLocalSettings(appSettings);
 
   const summary: BuildSummary = {
@@ -483,7 +490,7 @@ export function buildPackageFromIntent(
     warnings:          0,
   };
 
-  return { project, armTemplate, armParameters, localSettings, testSpecs, warnings, schemaFiles: [], localCodeFunctions: {}, summary };
+  return { project, armTemplate, armParameters, bicepTemplate, terraformFiles, localSettings, testSpecs, warnings, schemaFiles: [], localCodeFunctions: {}, summary };
 }
 
 // ─── Host.json Builder ────────────────────────────────────────────────────────

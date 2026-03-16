@@ -66,10 +66,12 @@ export function writeOutput(options: WriteOptions): void {
 
   // ── Workspace root (outputDir) — matches Sandro's canonical structure ───────
   //
-  //   {outputDir}/                        ← workspace root (3 items + reports)
+  //   {outputDir}/                        ← workspace root (4 items + reports)
   //     {AppName}.code-workspace
   //     {AppName}/                        ← Logic Apps project
   //       connections.json, host.json, workflows/, Artifacts/, lib/, ...
+  //     {AppName}_Infra/                  ← Infrastructure-as-code (ARM / Terraform)
+  //       arm-template.json, arm-parameters.json, README.md
   //     {AppName}_Functions/              ← C# Functions project (only if custom code)
   //       *.cs, *.csproj, *.sln, .vscode/
   //     migration-report.md
@@ -147,11 +149,65 @@ export function writeOutput(options: WriteOptions): void {
   writeFileSync(join(logicAppDir, '.funcignore'), FUNCIGNORE_CONTENT, 'utf-8');
   writeFileSync(join(logicAppDir, '.gitignore'), GITIGNORE_CONTENT, 'utf-8');
 
-  // ── ARM Infrastructure (inside Logic Apps project) ──────────────────────────
+  // ── Infra folder — sibling to Logic Apps project, NOT in the workspace ──────
+  // Infrastructure-as-code lives here, separate from the Logic Apps code project.
+  // Includes ARM (for Azure CLI / pipelines), Bicep (recommended Azure IaC), and Terraform.
+  const infraDir = join(outputDir, `${appName}_Infra`);
+  ensureDir(infraDir);
+
   if (buildResult.armTemplate && Object.keys(buildResult.armTemplate).length > 0) {
-    writeJson(join(logicAppDir, 'arm-template.json'), buildResult.armTemplate);
-    writeJson(join(logicAppDir, 'arm-parameters.json'), buildResult.armParameters);
+    const armDir = join(infraDir, 'arm');
+    ensureDir(armDir);
+    writeJson(join(armDir, 'arm-template.json'),   buildResult.armTemplate);
+    writeJson(join(armDir, 'arm-parameters.json'), buildResult.armParameters);
   }
+
+  if (buildResult.bicepTemplate) {
+    const bicepDir = join(infraDir, 'bicep');
+    ensureDir(bicepDir);
+    writeFileSync(join(bicepDir, 'main.bicep'), buildResult.bicepTemplate, 'utf-8');
+  }
+
+  if (buildResult.terraformFiles && Object.keys(buildResult.terraformFiles).length > 0) {
+    const tfDir = join(infraDir, 'terraform');
+    ensureDir(tfDir);
+    for (const [fileName, content] of Object.entries(buildResult.terraformFiles)) {
+      writeFileSync(join(tfDir, fileName), content, 'utf-8');
+    }
+  }
+
+  writeFileSync(
+    join(infraDir, 'README.md'),
+    `# ${appName} — Infrastructure\n\n` +
+    `This folder contains infrastructure-as-code templates for provisioning the Azure resources\n` +
+    `required to host the \`${appName}\` Logic Apps Standard application.\n\n` +
+    `> **This folder is intentionally separate from the Logic Apps project.**\n` +
+    `> Infrastructure provisioning is independent of workflow code deployment.\n\n` +
+    `## Terraform (recommended)\n\n` +
+    `\`\`\`bash\n` +
+    `cd terraform/\n` +
+    `terraform init\n` +
+    `terraform plan -var="app_name=${appName}" -var="resource_group_name=<rg-name>"\n` +
+    `terraform apply\n` +
+    `\`\`\`\n\n` +
+    `## Bicep\n\n` +
+    `\`\`\`bash\n` +
+    `cd bicep/\n` +
+    `az deployment group create \\\n` +
+    `  --resource-group <resource-group> \\\n` +
+    `  --template-file main.bicep \\\n` +
+    `  --parameters appName=${appName}\n` +
+    `\`\`\`\n\n` +
+    `## ARM (legacy)\n\n` +
+    `\`\`\`bash\n` +
+    `cd arm/\n` +
+    `az deployment group create \\\n` +
+    `  --resource-group <resource-group> \\\n` +
+    `  --template-file arm-template.json \\\n` +
+    `  --parameters arm-parameters.json\n` +
+    `\`\`\`\n`,
+    'utf-8',
+  );
 
   // ── Test specs (inside Logic Apps project) ─────────────────────────────────
   if (buildResult.testSpecs && Object.keys(buildResult.testSpecs).length > 0) {
