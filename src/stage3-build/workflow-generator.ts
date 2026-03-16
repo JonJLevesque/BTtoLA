@@ -119,6 +119,10 @@ export function generateWorkflow(
     actions = appendFtpDeleteAction(actions, triggerConnector);
   }
 
+  // HARD RULE: Every SetVariable must have a preceding InitializeVariable.
+  // Add missing initializers at the top so wrapInErrorScope can hoist them above Scope_Main.
+  actions = ensureVariablesInitialized(actions);
+
   // Optionally wrap everything in a top-level error-handling Scope
   if (options.wrapInScope) {
     actions = wrapInErrorScope(actions, intent.errorHandling);
@@ -1223,6 +1227,67 @@ function appendFtpDeleteAction(
   };
 
   return { ...actions, [actionName]: deleteAction };
+}
+
+// ─── Variable Initialization Guard ────────────────────────────────────────────
+
+/**
+ * HARD RULE: Every SetVariable action must have a preceding InitializeVariable
+ * for the same variable. Scans the entire action tree recursively; for any
+ * variable that is Set but never Initialized, adds an InitializeVariable at the
+ * TOP of the map (type: string, value: ''). The caller (wrapInErrorScope) will
+ * then hoist these above Scope_Main automatically.
+ */
+function ensureVariablesInitialized(
+  actions: Record<string, WdlAction>
+): Record<string, WdlAction> {
+  const initializedVars = new Set<string>();
+  const setVarNames     = new Set<string>();
+
+  function collectVars(acts: Record<string, WdlAction>): void {
+    for (const action of Object.values(acts)) {
+      if (action.type === 'InitializeVariable') {
+        const a = action as InitializeVariableAction;
+        for (const v of a.inputs.variables) initializedVars.add(v.name);
+      } else if (action.type === 'SetVariable') {
+        const a = action as SetVariableAction;
+        setVarNames.add(a.inputs.name);
+      }
+      // Recurse into child action containers
+      const a = action as unknown as Record<string, unknown>;
+      for (const key of ['actions', 'else', 'default']) {
+        const sub = a[key];
+        if (sub && typeof sub === 'object' && 'actions' in (sub as object)) {
+          collectVars((sub as { actions: Record<string, WdlAction> }).actions);
+        } else if (sub && typeof sub === 'object') {
+          collectVars(sub as Record<string, WdlAction>);
+        }
+      }
+      // Switch cases
+      if (a['cases'] && typeof a['cases'] === 'object') {
+        for (const c of Object.values(a['cases'] as Record<string, { actions: Record<string, WdlAction> }>)) {
+          if (c.actions) collectVars(c.actions);
+        }
+      }
+    }
+  }
+
+  collectVars(actions);
+
+  const missingVars = [...setVarNames].filter(v => !initializedVars.has(v));
+  if (missingVars.length === 0) return actions;
+
+  const newInits: Record<string, WdlAction> = {};
+  for (const varName of missingVars) {
+    const initName = `Initialize_${varName.replace(/[^A-Za-z0-9]/g, '_')}`.slice(0, 80);
+    newInits[initName] = {
+      type:   'InitializeVariable',
+      inputs: { variables: [{ name: varName, type: 'string', value: '' }] },
+      runAfter: {},
+    } satisfies InitializeVariableAction;
+  }
+
+  return { ...newInits, ...actions };
 }
 
 // ─── Error Scope Wrapper ──────────────────────────────────────────────────────
