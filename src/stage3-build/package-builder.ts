@@ -175,6 +175,18 @@ export function buildPackage(
         workflows.push({ name: workflowName, workflow: wf });
         handledPipelineNames.add(pipeline.name);
         receiverWorkflowCount++;
+
+        // Warn when this receiver pipeline uses FlatFileDecoding/FlatFileEncoding (placeholder schema)
+        const hasFlatFileReceiver = pipeline.components.some(c =>
+          ['FlatFileDasmComp', 'FFDasmComp', 'FlatFileAsmComp', 'FFAsmComp',
+           'FlatFileDecode', 'FlatFileEncode'].includes(c.componentType)
+        );
+        if (hasFlatFileReceiver) {
+          warnings.push(
+            `Receiver workflow '${workflowName}' uses FlatFileDecoding/FlatFileEncoding with placeholder schema 'FlatFileSchemaName'. ` +
+            `Replace 'FlatFileSchemaName' with your actual flat file schema name and upload the schema to your Integration Account.`
+          );
+        }
       }
     }
   }
@@ -256,6 +268,18 @@ export function buildPackage(
     });
     ensureResponseAction(wf, warnings); // standalone pipeline workflows are called as children
     workflows.push({ name: workflowName, workflow: wf });
+
+    // Warn when this pipeline uses FlatFileDecoding/FlatFileEncoding (placeholder schema)
+    const hasFlatFileAction = pipeline.components.some(c =>
+      ['FlatFileDasmComp', 'FFDasmComp', 'FlatFileAsmComp', 'FFAsmComp',
+       'FlatFileDecode', 'FlatFileEncode'].includes(c.componentType)
+    );
+    if (hasFlatFileAction) {
+      warnings.push(
+        `Pipeline workflow '${workflowName}' uses FlatFileDecoding/FlatFileEncoding with placeholder schema 'FlatFileSchemaName'. ` +
+        `Replace 'FlatFileSchemaName' with your actual flat file schema name and upload the schema to your Integration Account.`
+      );
+    }
   }
 
   // If still no workflows at all, generate a single workflow from the intent

@@ -307,8 +307,17 @@ export function generateMigrationReport(input: ReportInput): string {
     lines.push('');
   }
 
-  if (app.maps.length > 0) {
-    lines.push('**Integration Account:** Required for XSLT map execution from converted `.btm` files.');
+  const hasFlatFilePipelines = app.pipelines.some(p =>
+    p.components.some(c =>
+      ['FlatFileDasmComp','FFDasmComp','FlatFileAsmComp','FFAsmComp',
+       'FlatFileDecode','FlatFileEncode'].includes(c.componentType)
+    )
+  );
+  if (app.maps.length > 0 || hasFlatFilePipelines) {
+    const iaReasons: string[] = [];
+    if (app.maps.length > 0) iaReasons.push('XSLT map execution from converted `.btm` files');
+    if (hasFlatFilePipelines) iaReasons.push('Flat File Decode/Encode actions in pipeline workflows');
+    lines.push(`**Integration Account:** Required for ${iaReasons.join(' and ')}.`);
     lines.push('');
   }
 
@@ -321,13 +330,29 @@ export function generateMigrationReport(input: ReportInput): string {
 
   lines.push('## Generated Artifacts');
   lines.push('');
-  lines.push(`Output directory: \`${outputDir}\``);
+
+  const appName = buildResult.project.appName;
+  const hasFunctions = buildResult.localCodeFunctions
+    ? Object.keys(buildResult.localCodeFunctions).filter(k => k.endsWith('.cs')).length > 0
+    : false;
+
+  lines.push('**Workspace structure**');
+  lines.push('```');
+  lines.push(`${outputDir}/`);
+  lines.push(`  ${appName}.code-workspace     ← open this in VS Code`);
+  lines.push(`  ${appName}/                   ← Logic Apps project`);
+  if (hasFunctions) {
+    lines.push(`  ${appName}-Functions/        ← C# Functions project`);
+  }
+  lines.push(`  migration-report.md`);
+  lines.push(`  migration-report.html`);
+  lines.push('```');
   lines.push('');
 
   if (buildResult.project.workflows.length > 0) {
-    lines.push('**Workflows**');
+    lines.push(`**Workflows** *(inside \`${appName}/\`)*`);
     for (const wf of buildResult.project.workflows) {
-      lines.push(`- \`${wf.name}/workflow.json\``);
+      lines.push(`- \`${appName}/${wf.name}/workflow.json\``);
     }
     lines.push('');
   }
@@ -335,25 +360,40 @@ export function generateMigrationReport(input: ReportInput): string {
   const xsltCount = Object.keys(buildResult.project.xsltMaps).length;
   const lmlCount  = Object.keys(buildResult.project.lmlMaps).length;
   if (xsltCount + lmlCount > 0) {
-    lines.push('**Maps**');
+    lines.push(`**Maps** *(inside \`${appName}/Artifacts/Maps/\`)*`);
     for (const name of Object.keys(buildResult.project.xsltMaps)) {
-      lines.push(`- \`Artifacts/Maps/${name}\` — XSLT`);
+      lines.push(`- \`${name}\` — XSLT`);
     }
     for (const name of Object.keys(buildResult.project.lmlMaps)) {
-      lines.push(`- \`Artifacts/Maps/${name}\` — Data Mapper LML`);
+      lines.push(`- \`${name}\` — Data Mapper LML`);
     }
     lines.push('');
   }
 
-  if (buildResult.localCodeFunctions && Object.keys(buildResult.localCodeFunctions).length > 0) {
-    lines.push('**Local Code Function stubs** *(implement before deploying)*');
-    for (const name of Object.keys(buildResult.localCodeFunctions)) {
+  if (hasFunctions && buildResult.localCodeFunctions) {
+    const csFiles = Object.keys(buildResult.localCodeFunctions).filter(k => k.endsWith('.cs'));
+    lines.push(`**Local Code Function stubs** *(inside \`${appName}-Functions/\`)*`);
+    lines.push('Implement each stub before deploying. Build the Functions project to copy DLLs to `lib/custom/net472/`.');
+    for (const name of csFiles) {
       lines.push(`- \`${name}\``);
     }
     lines.push('');
   }
 
-  lines.push('**Configuration**');
+  const flatFilePipelineWorkflows = buildResult.project.workflows.filter(wf =>
+    wf.name.startsWith('Pipeline_') || wf.name.toLowerCase().includes('pipeline')
+  );
+  const hasFlatFileActions = flatFilePipelineWorkflows.some(wf =>
+    JSON.stringify(wf.workflow).includes('FlatFileSchemaName')
+  );
+  if (hasFlatFileActions) {
+    lines.push('**⚠ Flat File schema placeholder** — Pipeline workflows contain `FlatFileSchemaName` as a placeholder.');
+    lines.push('Replace it with your actual flat file schema name in each pipeline `workflow.json`.');
+    lines.push('The schema must be uploaded to your Integration Account before the workflow can run.');
+    lines.push('');
+  }
+
+  lines.push(`**Configuration** *(inside \`${appName}/\`)*`);
   lines.push('- `connections.json` — connector definitions');
   lines.push('- `host.json` — Logic Apps host settings');
   lines.push('- `local.settings.json` — local dev settings *(gitignore this)*');
@@ -488,17 +528,29 @@ export function generateMigrationReport(input: ReportInput): string {
 
   lines.push('## Getting Started');
   lines.push('');
-  lines.push('1. **Install the extension** — "Azure Logic Apps (Standard)" in VS Code (`ms-azuretools.vscode-azurelogicapps`)');
-  lines.push('2. **Open the folder** — File → Open Folder → select this output directory');
+  lines.push(`1. **Open the workspace** — File → Open Workspace from File → select \`${appName}.code-workspace\``);
+  lines.push(`   This loads both \`${appName}/\` (Logic Apps project) and \`${appName}-Functions/\` (C# Functions project) in the same VS Code window.`);
+  lines.push('2. **Install prerequisites** — VS Code will prompt to install the "Azure Logic Apps (Standard)" extension (`ms-azuretools.vscode-azurelogicapps`). Accept the recommendation.');
   lines.push('3. **Start Azurite** — the designer requires the local storage emulator.');
   lines.push('   Click `Azurite Blob Service`, `Azurite Queue Service`, and `Azurite Table Service` in the VS Code status bar.');
-  lines.push('   All three must be running (green) before the designer will load.');
+  lines.push('   All three must show a green checkmark before the designer will load.');
   lines.push('   If Azurite is not installed: `npm install -g azurite`');
-  lines.push('4. **Configure connection strings** — update `local.settings.json` with your real values');
-  lines.push('5. **Open a workflow** — right-click any `workflow.json` → "Open in Designer"');
-  lines.push('6. **Deploy** — Logic Apps extension sidebar → Deploy to Logic App');
+  lines.push(`4. **Configure connection strings** — edit \`${appName}/local.settings.json\` with your real connection strings`);
+  if (hasFlatFilePipelines) {
+    lines.push(`5. **Configure flat file schemas** — pipeline workflows contain a \`FlatFileSchemaName\` placeholder.`);
+    lines.push(`   Replace every occurrence with your actual flat file schema name (the name you uploaded to your Integration Account).`);
+    lines.push(`   Search for \`FlatFileSchemaName\` across the \`${appName}/\` folder to find all occurrences.`);
+  }
+  if (hasFunctions) {
+    const ffStep = hasFlatFilePipelines ? '6' : '5';
+    lines.push(`${ffStep}. **Build the Functions project** — right-click \`${appName}-Functions\` in the Explorer panel → "Build functions project".`);
+    lines.push(`   This compiles the C# stubs and copies the DLLs to \`${appName}/lib/custom/net472/\`.`);
+    lines.push(`   The Logic Apps designer cannot load Local Code Function actions until this step completes.`);
+  }
+  const designerStep = hasFlatFilePipelines && hasFunctions ? '7' : hasFlatFilePipelines || hasFunctions ? '6' : '5';
+  lines.push(`${designerStep}. **Open a workflow in the designer** — navigate to \`${appName}/{WorkflowName}/workflow.json\` → right-click → "Open in Designer"`);
   lines.push('');
-  lines.push('Maps are in `Artifacts/Maps/` and Schemas are in `Artifacts/Schemas/`.');
+  lines.push(`Maps are in \`${appName}/Artifacts/Maps/\` and Schemas are in \`${appName}/Artifacts/Schemas/\`.`);
   lines.push('');
 
   // ── Manual Next Steps ─────────────────────────────────────────────────────
@@ -543,8 +595,10 @@ export function generateMigrationReport(input: ReportInput): string {
   lines.push('');
   lines.push('**Option A — VS Code:**');
   lines.push('```');
-  lines.push(`Right-click the output folder → "Deploy to Logic App..."`);
+  lines.push(`Right-click the "${appName}" subfolder (not the workspace root) → "Deploy to Logic App..."`);
   lines.push('```');
+  lines.push(`> The workspace root contains \`${appName}.code-workspace\`, \`${appName}/\`, and \`${appName}-Functions/\`.`);
+  lines.push(`> Deploy from the \`${appName}/\` folder only — that is the Logic Apps project.`);
   lines.push('');
   lines.push('**Option B — Azure CLI:**');
   lines.push('```bash');
