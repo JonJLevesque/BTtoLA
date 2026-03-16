@@ -369,7 +369,10 @@ export function buildPackage(
   }
 
   // ── 10. Generate local code function stubs ────────────────────────────────
-  const localCodeFunctions = collectLocalCodeFunctionStubs(intent, appName);
+  // FIX-3: Collect from all intents — orchestration + all pipeline intents — so
+  // InvokeFunction steps from custom pipeline components also get .cs stubs generated.
+  const pipelineIntents = app.pipelines.map(p => buildPipelineIntent(p));
+  const localCodeFunctions = collectLocalCodeFunctionStubs([intent, ...pipelineIntents], appName);
   if (Object.keys(localCodeFunctions).length > 0) {
     warnings.push(
       `${Object.keys(localCodeFunctions).length} local code function stub(s) generated. ` +
@@ -656,15 +659,17 @@ function buildPipelineSteps(pipeline: ParsedPipeline): IntegrationStep[] {
 const COMPONENT_ACTION_MAP: Record<string, { type: IntegrationStep['type']; actionType: string; config: Record<string, unknown>; needsFunction: boolean }> = {
   // Receive pipeline components
   'XmlDasmComp':          { type: 'set-variable', actionType: 'Compose', config: { value: '@xml(triggerBody())' }, needsFunction: false },
-  'FlatFileDasmComp':     { type: 'invoke-function', actionType: 'InvokeFunction', config: { functionName: 'FlatFileDecode', expression: 'Decode flat file message to XML' }, needsFunction: true },
-  'FFDasmComp':           { type: 'invoke-function', actionType: 'InvokeFunction', config: { functionName: 'FlatFileDecode', expression: 'Decode flat file message to XML' }, needsFunction: true },
+  // FIX-4: Flat File uses Logic Apps Standard built-in FlatFileDecoding/FlatFileEncoding actions (not InvokeFunction)
+  'FlatFileDasmComp':     { type: 'transform', actionType: 'FlatFileDecoding', config: { content: '@triggerBody()', schemaName: 'TODO_flat_file_schema' }, needsFunction: false },
+  'FFDasmComp':           { type: 'transform', actionType: 'FlatFileDecoding', config: { content: '@triggerBody()', schemaName: 'TODO_flat_file_schema' }, needsFunction: false },
   'XmlValidator':         { type: 'set-variable', actionType: 'Compose', config: { value: '@triggerBody()', note: 'TODO: Add XML validation via Integration Account schema' }, needsFunction: false },
   'JsonDecoder':          { type: 'set-variable', actionType: 'Compose', config: { value: '@json(string(triggerBody()))' }, needsFunction: false },
   'PartyRes':             { type: 'set-variable', actionType: 'Compose', config: { value: '@triggerBody()', note: 'Party resolution: replace with Azure Table lookup' }, needsFunction: false },
   // Send pipeline components
   'XmlAsmComp':           { type: 'set-variable', actionType: 'Compose', config: { value: '@string(triggerBody())' }, needsFunction: false },
-  'FlatFileAsmComp':      { type: 'invoke-function', actionType: 'InvokeFunction', config: { functionName: 'FlatFileEncode', expression: 'Encode XML to flat file format' }, needsFunction: true },
-  'FFAsmComp':            { type: 'invoke-function', actionType: 'InvokeFunction', config: { functionName: 'FlatFileEncode', expression: 'Encode XML to flat file format' }, needsFunction: true },
+  // FIX-4: Flat File uses Logic Apps Standard built-in FlatFileDecoding/FlatFileEncoding actions (not InvokeFunction)
+  'FlatFileAsmComp':      { type: 'transform', actionType: 'FlatFileEncoding', config: { content: '@triggerBody()', schemaName: 'TODO_flat_file_schema' }, needsFunction: false },
+  'FFAsmComp':            { type: 'transform', actionType: 'FlatFileEncoding', config: { content: '@triggerBody()', schemaName: 'TODO_flat_file_schema' }, needsFunction: false },
   'JsonEncoder':          { type: 'set-variable', actionType: 'Compose', config: { value: '@json(string(triggerBody()))' }, needsFunction: false },
   // EDI / AS2 — require Integration Account
   'EDIDisassemblerComp':  { type: 'invoke-function', actionType: 'InvokeFunction', config: { functionName: 'EdiDecode', expression: 'EDI decode requires Integration Account connector' }, needsFunction: true },
@@ -764,13 +769,16 @@ function buildPipelineIntent(pipeline: ParsedPipeline): IntegrationIntent {
  * Returns a map of filename → C# source content.
  */
 function collectLocalCodeFunctionStubs(
-  intent: IntegrationIntent,
+  intents: IntegrationIntent | IntegrationIntent[],
   appName: string
 ): Record<string, string> {
   const stubs: Record<string, string> = {};
-  const namespace = appName.replace(/[^A-Za-z0-9]/g, '');
+  // FIX-9: Namespace must be unique — not same as app name or function class names
+  const namespace = appName.replace(/[^A-Za-z0-9]/g, '') + 'Functions';
 
-  const allSteps = flattenIntentSteps(intent.steps);
+  // FIX-3: Collect stubs from all intents (orchestration + pipeline) to cover InvokeFunction in pipeline workflows
+  const intentArr = Array.isArray(intents) ? intents : [intents];
+  const allSteps = intentArr.flatMap(intent => flattenIntentSteps(intent.steps));
   for (const step of allSteps) {
     if (step.type === 'invoke-function') {
       const cfg = step.config as Record<string, unknown>;
@@ -816,6 +824,8 @@ function generateLocalCodeFunctionStub(
 
 namespace ${namespace}
 {
+    using System;
+    using System.Collections.Generic;
     using System.Threading.Tasks;
     using Microsoft.Azure.Functions.Extensions.Workflows;
     using Microsoft.Azure.WebJobs;
@@ -838,7 +848,7 @@ namespace ${namespace}
         /// Executes the logic app workflow action.
         /// </summary>
         [FunctionName("${functionName}")]
-        public Task<object> Run([WorkflowActionTrigger] object requestBody)
+        public Task<string> Run([WorkflowActionTrigger] string requestBody)
         {
             this.logger.LogInformation("${functionName}: starting.");
 
@@ -846,7 +856,7 @@ namespace ${namespace}
 ${exprComment}
 
             // TODO: implement transformation logic and return result
-            throw new System.NotImplementedException("Implement ${functionName} logic here.");
+            throw new NotImplementedException("Implement ${functionName} logic here.");
         }
     }
 }
@@ -890,11 +900,10 @@ function sanitizeAppName(name: string): string {
  */
 export function sanitizeWorkflowName(name: string): string {
   let result = name
-    .replace(/[^a-zA-Z0-9_\-]/g, '_')   // only letters, digits, underscores, hyphens
-    .replace(/-{2,}/g, '-')              // collapse consecutive hyphens
-    .replace(/_{2,}/g, '_')             // collapse consecutive underscores
-    .replace(/^[-_]+/, '')              // trim leading separators
-    .replace(/[-_]+$/, '');             // trim trailing separators
+    .replace(/[^a-zA-Z0-9_]/g, '_')    // FIX-8: only letters, digits, underscores — NO hyphens
+    .replace(/_{2,}/g, '_')            // collapse consecutive underscores
+    .replace(/^_+/, '')                // trim leading underscores
+    .replace(/_+$/, '');               // trim trailing underscores
 
   // Must start with a letter
   if (result && !/^[a-zA-Z]/.test(result)) {

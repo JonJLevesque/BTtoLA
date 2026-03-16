@@ -520,6 +520,22 @@ function buildStep(
 
 function buildTransformAction(step: IntegrationStep, runAfter: RunAfterMap): TransformAction {
   const cfg = step.config as Record<string, unknown>;
+  const actionType = step.actionType ?? 'Xslt';
+
+  // FIX-4: FlatFileDecoding/FlatFileEncoding are built-in Logic Apps Standard actions
+  if (actionType === 'FlatFileDecoding' || actionType === 'FlatFileEncoding') {
+    return {
+      type: actionType as 'FlatFileDecoding' | 'FlatFileEncoding',
+      inputs: {
+        content: (cfg['content'] as string) ?? '@triggerBody()',
+        integrationAccount: {
+          schema: { name: (cfg['schemaName'] as string) ?? 'TODO_flat_file_schema' },
+        },
+      },
+      runAfter,
+    } as unknown as TransformAction;
+  }
+
   return {
     type: 'Xslt',
     inputs: {

@@ -114,6 +114,10 @@ export function writeOutput(options: WriteOptions): void {
   ensureDir(net472Dir);
   writeJson(join(net472Dir, 'extensions.json'), { extensions: [] });
 
+  // FIX-1: builtinOperationSdks placeholder dirs — Logic Apps Standard runtime expects these
+  ensureDir(join(outputDir, 'lib', 'builtinOperationSdks', 'JAR'));
+  ensureDir(join(outputDir, 'lib', 'builtinOperationSdks', 'net472'));
+
   // ── Local code functions → sibling C# project ─────────────────────────────
   const localFunctions = buildResult.localCodeFunctions ?? {};
   const functionFileNames = Object.keys(localFunctions).filter(k => k.endsWith('.cs'));
@@ -121,6 +125,8 @@ export function writeOutput(options: WriteOptions): void {
 
   if (functionNames.length > 0) {
     const functionsProjectName = `${appName}-Functions`;
+    // FIX-9: Namespace must match the C# stubs (package-builder uses appName + 'Functions')
+    const functionsNamespace = appName.replace(/[^A-Za-z0-9]/g, '') + 'Functions';
     const functionsDir = join(outputDir, functionsProjectName);
     ensureDir(functionsDir);
 
@@ -138,6 +144,13 @@ export function writeOutput(options: WriteOptions): void {
       'utf-8',
     );
 
+    // FIX-13: .sln file — needed for Visual Studio to open the project correctly
+    writeFileSync(
+      join(functionsDir, `${functionsProjectName}.sln`),
+      generateSolutionFile(functionsProjectName),
+      'utf-8',
+    );
+
     // .vscode for the C# project — matches reference (Empty_Function/.vscode/)
     const fvsDir = join(functionsDir, '.vscode');
     ensureDir(fvsDir);
@@ -146,12 +159,13 @@ export function writeOutput(options: WriteOptions): void {
     writeJson(join(fvsDir, 'tasks.json'), FUNCTIONS_VSCODE_TASKS);
 
     // lib/custom/{functionName}/function.json — binding descriptor
+    // FIX-2: Use the same namespace as C# stubs; add InputSchema + Trigger blocks
     for (const functionName of functionNames) {
       const fnDescDir = join(outputDir, 'lib', 'custom', functionName);
       ensureDir(fnDescDir);
       writeJson(
         join(fnDescDir, 'function.json'),
-        generateFunctionJson(functionsProjectName, functionName),
+        generateFunctionJson(functionsNamespace, functionName),
       );
     }
   }
@@ -403,6 +417,20 @@ function generateCsproj(logicAppRelativePath: string): string {
 }
 
 function generateFunctionJson(namespace: string, functionName: string): Record<string, unknown> {
+  // FIX-2: Add InputSchema, Trigger, Cardinality, Raw fields — matches canonical function.json
+  // from Sample LogicApps/las-training 2/LAS-Training/lib/custom/test/function.json
+  const binding = {
+    Name: 'requestBody',
+    Connection: null,
+    Type: 'workflowActionTrigger',
+    Properties: {},
+    Direction: 'In',
+    DataType: null,
+    Cardinality: null,
+    IsTrigger: true,
+    IsReturn: false,
+    Raw: null,
+  };
   return {
     Name: null,
     ScriptFile: `../bin/${functionName}.dll`,
@@ -410,32 +438,57 @@ function generateFunctionJson(namespace: string, functionName: string): Record<s
     EntryPoint: `${namespace}.${functionName}.Run`,
     Language: 'net472',
     Properties: {},
-    Bindings: [
-      {
-        Name: 'body',
-        Connection: null,
-        Type: 'workflowActionTrigger',
-        Properties: {},
-        Direction: 'In',
-        DataType: null,
-        IsTrigger: true,
-        IsReturn: false,
-      },
-    ],
-    InputBindings: [
-      {
-        Name: 'body',
-        Connection: null,
-        Type: 'workflowActionTrigger',
-        Properties: {},
-        Direction: 'In',
-        DataType: null,
-        IsTrigger: true,
-        IsReturn: false,
-      },
-    ],
+    Bindings: [binding],
+    InputBindings: [binding],
     OutputBindings: [],
+    Trigger: binding,
+    InputSchema: {
+      type: 'object',
+      properties: {
+        requestBody: { type: 'string' },
+      },
+      required: ['requestBody'],
+    },
   };
+}
+
+function generateSolutionFile(projectName: string): string {
+  // FIX-13: Minimal .sln for Visual Studio to open the Functions project
+  const projectGuid = randomGuid();
+  const solutionGuid = randomGuid();
+  return `
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "${projectName}", "${projectName}.csproj", "{${projectGuid}}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{${projectGuid}}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{${projectGuid}}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{${projectGuid}}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{${projectGuid}}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {${solutionGuid}}
+	EndGlobalSection
+EndGlobal
+`.trimStart();
+}
+
+function randomGuid(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16).toUpperCase();
+  });
 }
 
 // ─── Static templates ─────────────────────────────────────────────────────────
