@@ -5,41 +5,45 @@
  * The output directory IS the Logic Apps project root (flat structure).
  * If local code functions are present, the C# project lives in a sibling subfolder.
  *
- *   {outputDir}/                       ← Logic Apps Standard project root
- *     .funcignore
- *     .gitignore
- *     .vscode/
- *       extensions.json
- *       launch.json                    debug config (supports custom code runtime)
- *       settings.json
- *       tasks.json                     generateDebugSymbols + func host start
- *     Artifacts/
- *       Maps/   {name}.xslt / .lml
- *       Rules/  (placeholder for migrated BRE rule policies)
- *       Schemas/ {name}.xsd
- *     lib/
- *       custom/
- *         net472/
- *           extensions.json            {"extensions":[]}
- *         {FunctionName}/
- *           function.json              binding descriptor per local code function
- *     workflow-designtime/             required by VS Code Logic Apps extension for designer
+ *   {outputDir}/                       ← Workspace root (matches Sandro's canonical structure)
+ *     {AppName}.code-workspace         multi-root workspace file
+ *     migration-report.md / .html      reports at workspace root
+ *     {AppName}/                       ← Logic Apps Standard project
+ *       .funcignore
+ *       .gitignore
+ *       .vscode/
+ *         extensions.json
+ *         launch.json
+ *         settings.json
+ *         tasks.json
+ *       Artifacts/
+ *         Maps/   {name}.xslt / .lml
+ *         Rules/  (placeholder for migrated BRE rule policies)
+ *         Schemas/ {name}.xsd
+ *       lib/
+ *         builtinOperationSdks/JAR/    (empty placeholder)
+ *         builtinOperationSdks/net472/ (empty placeholder)
+ *         custom/
+ *           net472/
+ *             extensions.json          {"extensions":[]}
+ *           {FunctionName}/
+ *             function.json            binding descriptor per local code function
+ *       workflow-designtime/
+ *         host.json
+ *         local.settings.json
+ *       {WorkflowName}/
+ *         workflow.json
+ *       connections.json
  *       host.json
  *       local.settings.json
- *     {WorkflowName}/
- *       workflow.json
- *     {AppName}-Functions/             C# project (only if local code functions exist)
+ *       parameters.json
+ *       arm-template.json / arm-parameters.json (if infrastructure included)
+ *       tests/ {WorkflowName}.tests.json
+ *     {AppName}-Functions/             ← C# project (only if local code functions exist)
  *       {FunctionName}.cs
  *       {AppName}-Functions.csproj
+ *       {AppName}-Functions.sln
  *       .vscode/
- *     connections.json
- *     host.json
- *     local.settings.json
- *     parameters.json                 {} (workflow parameters, always present)
- *     {AppName}.code-workspace         single-root workspace (+ Functions folder if needed)
- *     arm-template.json / arm-parameters.json (if infrastructure included)
- *     tests/ {WorkflowName}.tests.json
- *     migration-report.md / .html
  */
 
 import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'fs';
@@ -60,26 +64,40 @@ export function writeOutput(options: WriteOptions): void {
   const { outputDir, buildResult, migrationReport } = options;
   const appName = buildResult.project.appName;
 
+  // ── Workspace root (outputDir) — matches Sandro's canonical structure ───────
+  //
+  //   {outputDir}/                        ← workspace root (3 items + reports)
+  //     {AppName}.code-workspace
+  //     {AppName}/                        ← Logic Apps project
+  //       connections.json, host.json, workflows/, Artifacts/, lib/, ...
+  //     {AppName}-Functions/              ← C# Functions project (only if custom code)
+  //       *.cs, *.csproj, *.sln, .vscode/
+  //     migration-report.md
+  //     migration-report.html
+  //
   ensureDir(outputDir);
+
+  // Logic Apps project lives in a named subdirectory, not directly in outputDir
+  const logicAppDir = join(outputDir, appName);
+  ensureDir(logicAppDir);
 
   // ── Workflows ──────────────────────────────────────────────────────────────
   for (const wf of buildResult.project.workflows) {
-    const wfDir = join(outputDir, wf.name);
+    const wfDir = join(logicAppDir, wf.name);
     ensureDir(wfDir);
     writeJson(join(wfDir, 'workflow.json'), wf.workflow);
   }
 
-  // ── Root project files ─────────────────────────────────────────────────────
-  writeJson(join(outputDir, 'connections.json'), buildResult.project.connections);
-  writeJson(join(outputDir, 'host.json'), buildResult.project.host);
-  writeJson(join(outputDir, 'local.settings.json'), buildResult.localSettings);
-  // Logic Apps workflow parameters file (always present, even if empty)
-  writeJson(join(outputDir, 'parameters.json'), {});
+  // ── Root Logic Apps project files ──────────────────────────────────────────
+  writeJson(join(logicAppDir, 'connections.json'), buildResult.project.connections);
+  writeJson(join(logicAppDir, 'host.json'), buildResult.project.host);
+  writeJson(join(logicAppDir, 'local.settings.json'), buildResult.localSettings);
+  writeJson(join(logicAppDir, 'parameters.json'), {});
 
   // ── Artifacts — always created (Maps, Rules, Schemas always present) ────────
-  const mapsDir    = join(outputDir, 'Artifacts', 'Maps');
-  const rulesDir   = join(outputDir, 'Artifacts', 'Rules');
-  const schemasDir = join(outputDir, 'Artifacts', 'Schemas');
+  const mapsDir    = join(logicAppDir, 'Artifacts', 'Maps');
+  const rulesDir   = join(logicAppDir, 'Artifacts', 'Rules');
+  const schemasDir = join(logicAppDir, 'Artifacts', 'Schemas');
   ensureDir(mapsDir);
   ensureDir(rulesDir);
   ensureDir(schemasDir);
@@ -101,32 +119,59 @@ export function writeOutput(options: WriteOptions): void {
     }
   }
 
-  // ── workflow-designtime — at project ROOT ──────────────────────────────────
-  // Required by the VS Code Logic Apps Standard extension for the workflow
-  // designer. Must have its own host.json + local.settings.json.
-  const wdDir = join(outputDir, 'workflow-designtime');
+  // ── workflow-designtime — inside Logic Apps project ─────────────────────────
+  const wdDir = join(logicAppDir, 'workflow-designtime');
   ensureDir(wdDir);
   writeJson(join(wdDir, 'host.json'), WORKFLOW_DESIGNTIME_HOST);
   writeJson(join(wdDir, 'local.settings.json'), WORKFLOW_DESIGNTIME_LOCAL_SETTINGS);
 
-  // ── lib/custom structure ───────────────────────────────────────────────────
-  const net472Dir = join(outputDir, 'lib', 'custom', 'net472');
+  // ── lib/custom structure (inside Logic Apps project) ───────────────────────
+  const net472Dir = join(logicAppDir, 'lib', 'custom', 'net472');
   ensureDir(net472Dir);
   writeJson(join(net472Dir, 'extensions.json'), { extensions: [] });
 
-  // FIX-1: builtinOperationSdks placeholder dirs — Logic Apps Standard runtime expects these
-  ensureDir(join(outputDir, 'lib', 'builtinOperationSdks', 'JAR'));
-  ensureDir(join(outputDir, 'lib', 'builtinOperationSdks', 'net472'));
+  // builtinOperationSdks placeholder dirs — Logic Apps Standard runtime expects these
+  ensureDir(join(logicAppDir, 'lib', 'builtinOperationSdks', 'JAR'));
+  ensureDir(join(logicAppDir, 'lib', 'builtinOperationSdks', 'net472'));
 
-  // ── Local code functions → sibling C# project ─────────────────────────────
+  // ── .vscode/ (inside Logic Apps project) ───────────────────────────────────
+  const vscodeDir = join(logicAppDir, '.vscode');
+  ensureDir(vscodeDir);
+  writeJson(join(vscodeDir, 'extensions.json'), {
+    recommendations: ['ms-azuretools.vscode-azurelogicapps'],
+  });
+  writeJson(join(vscodeDir, 'settings.json'), generateVscodeSettings());
+  writeJson(join(vscodeDir, 'tasks.json'), VSCODE_TASKS);
+
+  // ── .funcignore / .gitignore (inside Logic Apps project) ───────────────────
+  writeFileSync(join(logicAppDir, '.funcignore'), FUNCIGNORE_CONTENT, 'utf-8');
+  writeFileSync(join(logicAppDir, '.gitignore'), GITIGNORE_CONTENT, 'utf-8');
+
+  // ── ARM Infrastructure (inside Logic Apps project) ──────────────────────────
+  if (buildResult.armTemplate && Object.keys(buildResult.armTemplate).length > 0) {
+    writeJson(join(logicAppDir, 'arm-template.json'), buildResult.armTemplate);
+    writeJson(join(logicAppDir, 'arm-parameters.json'), buildResult.armParameters);
+  }
+
+  // ── Test specs (inside Logic Apps project) ─────────────────────────────────
+  if (buildResult.testSpecs && Object.keys(buildResult.testSpecs).length > 0) {
+    const testsDir = join(logicAppDir, 'tests');
+    ensureDir(testsDir);
+    for (const [name, content] of Object.entries(buildResult.testSpecs)) {
+      writeFileSync(join(testsDir, name), String(content), 'utf-8');
+    }
+  }
+
+  // ── C# Functions project — sibling to Logic Apps project ───────────────────
   const localFunctions = buildResult.localCodeFunctions ?? {};
   const functionFileNames = Object.keys(localFunctions).filter(k => k.endsWith('.cs'));
   const functionNames = functionFileNames.map(k => k.replace(/\.cs$/, ''));
 
   if (functionNames.length > 0) {
     const functionsProjectName = `${appName}-Functions`;
-    // FIX-9: Namespace must match the C# stubs (package-builder uses appName + 'Functions')
+    // Namespace must match the C# stubs (package-builder uses appName + 'Functions')
     const functionsNamespace = appName.replace(/[^A-Za-z0-9]/g, '') + 'Functions';
+    // Functions project is a sibling to the Logic Apps project — both under outputDir
     const functionsDir = join(outputDir, functionsProjectName);
     ensureDir(functionsDir);
 
@@ -137,72 +182,46 @@ export function writeOutput(options: WriteOptions): void {
       }
     }
 
-    // .csproj — <LogicAppFolder> points to parent (the LA project root)
+    // .csproj — <LogicAppFolder> points to sibling Logic Apps project dir
     writeFileSync(
       join(functionsDir, `${functionsProjectName}.csproj`),
-      generateCsproj('..'),
+      generateCsproj(`../${appName}`),
       'utf-8',
     );
 
-    // FIX-13: .sln file — needed for Visual Studio to open the project correctly
+    // .sln — needed for Visual Studio to open the project correctly
     writeFileSync(
       join(functionsDir, `${functionsProjectName}.sln`),
       generateSolutionFile(functionsProjectName),
       'utf-8',
     );
 
-    // .vscode for the C# project — matches reference (Empty_Function/.vscode/)
+    // .vscode for the C# project
     const fvsDir = join(functionsDir, '.vscode');
     ensureDir(fvsDir);
     writeJson(join(fvsDir, 'extensions.json'), FUNCTIONS_VSCODE_EXTENSIONS);
     writeJson(join(fvsDir, 'settings.json'), FUNCTIONS_VSCODE_SETTINGS);
     writeJson(join(fvsDir, 'tasks.json'), FUNCTIONS_VSCODE_TASKS);
 
-    // lib/custom/{functionName}/function.json — binding descriptor
-    // FIX-2: Use the same namespace as C# stubs; add InputSchema + Trigger blocks
+    // lib/custom/{functionName}/function.json — inside Logic Apps project
     for (const functionName of functionNames) {
-      const fnDescDir = join(outputDir, 'lib', 'custom', functionName);
+      const fnDescDir = join(logicAppDir, 'lib', 'custom', functionName);
       ensureDir(fnDescDir);
       writeJson(
         join(fnDescDir, 'function.json'),
         generateFunctionJson(functionsNamespace, functionName),
       );
     }
+
+    // launch.json goes in Logic Apps project .vscode (references Functions debug)
+    writeJson(join(vscodeDir, 'launch.json'), generateLaunchJson(appName, true));
+  } else {
+    writeJson(join(vscodeDir, 'launch.json'), generateLaunchJson(appName, false));
   }
 
-  // ── ARM Infrastructure ─────────────────────────────────────────────────────
-  if (buildResult.armTemplate && Object.keys(buildResult.armTemplate).length > 0) {
-    writeJson(join(outputDir, 'arm-template.json'), buildResult.armTemplate);
-    writeJson(join(outputDir, 'arm-parameters.json'), buildResult.armParameters);
-  }
-
-  // ── Test specs ─────────────────────────────────────────────────────────────
-  if (buildResult.testSpecs && Object.keys(buildResult.testSpecs).length > 0) {
-    const testsDir = join(outputDir, 'tests');
-    ensureDir(testsDir);
-    for (const [name, content] of Object.entries(buildResult.testSpecs)) {
-      writeFileSync(join(testsDir, name), String(content), 'utf-8');
-    }
-  }
-
-  // ── .vscode/ ───────────────────────────────────────────────────────────────
-  const vscodeDir = join(outputDir, '.vscode');
-  ensureDir(vscodeDir);
-  writeJson(join(vscodeDir, 'extensions.json'), {
-    recommendations: ['ms-azuretools.vscode-azurelogicapps'],
-  });
-  writeJson(join(vscodeDir, 'settings.json'), generateVscodeSettings());
-  writeJson(join(vscodeDir, 'launch.json'), generateLaunchJson(appName, functionNames.length > 0));
-  writeJson(join(vscodeDir, 'tasks.json'), VSCODE_TASKS);
-
-  // ── .funcignore / .gitignore ───────────────────────────────────────────────
-  writeFileSync(join(outputDir, '.funcignore'), FUNCIGNORE_CONTENT, 'utf-8');
-  writeFileSync(join(outputDir, '.gitignore'), GITIGNORE_CONTENT, 'utf-8');
-
-  // ── code-workspace ─────────────────────────────────────────────────────────
-  // Single-root when no functions; multi-root when C# functions project exists.
+  // ── code-workspace — at workspace root ─────────────────────────────────────
   const workspaceFolders: Array<{ name: string; path: string }> = [
-    { name: appName, path: '.' },
+    { name: appName, path: `./${appName}` },
   ];
   if (functionNames.length > 0) {
     workspaceFolders.push({
@@ -217,7 +236,7 @@ export function writeOutput(options: WriteOptions): void {
     },
   });
 
-  // ── Migration report ───────────────────────────────────────────────────────
+  // ── Migration reports — at workspace root alongside .code-workspace ─────────
   writeFileSync(join(outputDir, 'migration-report.md'), migrationReport, 'utf-8');
   writeFileSync(
     join(outputDir, 'migration-report.html'),
