@@ -47,7 +47,7 @@
  */
 
 import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'fs';
-import { join, basename } from 'path';
+import { join, basename, resolve } from 'path';
 import type { BuildResult } from '../stage3-build/package-builder.js';
 import { migrationReportToHtml } from './markdown-to-html.js';
 
@@ -97,7 +97,7 @@ export function writeOutput(options: WriteOptions): void {
   // so that the VS Code designer can discover local code functions in lib/custom/.
   const localSettings = JSON.parse(JSON.stringify(buildResult.localSettings)) as Record<string, unknown>;
   const localSettingsVals = localSettings['Values'] as Record<string, string> | undefined;
-  if (localSettingsVals) localSettingsVals['ProjectDirectoryPath'] = logicAppDir;
+  if (localSettingsVals) localSettingsVals['ProjectDirectoryPath'] = resolve(logicAppDir);
   writeJson(join(logicAppDir, 'local.settings.json'), localSettings);
   writeJson(join(logicAppDir, 'parameters.json'), {});
 
@@ -133,7 +133,7 @@ export function writeOutput(options: WriteOptions): void {
   // Patch ProjectDirectoryPath to the Logic Apps project root for the designtime settings too
   const wdLocalSettings = JSON.parse(JSON.stringify(WORKFLOW_DESIGNTIME_LOCAL_SETTINGS)) as Record<string, unknown>;
   const wdVals = wdLocalSettings['Values'] as Record<string, string> | undefined;
-  if (wdVals) wdVals['ProjectDirectoryPath'] = logicAppDir;
+  if (wdVals) wdVals['ProjectDirectoryPath'] = resolve(logicAppDir);
   writeJson(join(wdDir, 'local.settings.json'), wdLocalSettings);
 
   // ── lib/custom structure (inside Logic Apps project) ───────────────────────
