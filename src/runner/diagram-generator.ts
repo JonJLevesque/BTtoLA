@@ -123,7 +123,7 @@ function svgWrapper(nodes: DiagramNode[], edges: DiagramEdge[], prefix: string):
   const nodeSvg = nodes.map(renderNode).join('');
 
   return `<svg viewBox="0 0 ${svgW} ${svgH}" width="100%" preserveAspectRatio="xMinYMin meet"
-  xmlns="http://www.w3.org/2000/svg" style="overflow:visible">
+  xmlns="http://www.w3.org/2000/svg" style="max-width:${svgW}px;overflow:visible">
   <defs>
     <marker id="${prefix}-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
       <path d="M0,0 L0,6 L8,3 z" fill="#9ca3af"/>
