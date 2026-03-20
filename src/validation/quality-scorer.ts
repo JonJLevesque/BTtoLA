@@ -28,6 +28,19 @@ export interface QualityReport {
   recommendations: string[];
 }
 
+/**
+ * Migration-level context that affects the quality score beyond WDL structure.
+ * Passed from the runner so the scorer can penalize for incomplete work.
+ */
+export interface MigrationContext {
+  /** Number of CRITICAL severity gaps (require redesign — not automatically handled) */
+  criticalGapCount: number;
+  /** Number of HIGH severity gaps (significant workaround needed) */
+  highGapCount: number;
+  /** Number of unimplemented function stubs (local code .cs + Azure Function .csx) */
+  unimplementedStubCount: number;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isRecord(val: unknown): val is Record<string, unknown> {
@@ -65,7 +78,7 @@ function getGrade(score: number): 'A' | 'B' | 'C' | 'D' | 'F' {
 
 // ─── Scorer ───────────────────────────────────────────────────────────────────
 
-export function scoreWorkflowQuality(workflowJson: unknown, intentJson?: unknown): QualityReport {
+export function scoreWorkflowQuality(workflowJson: unknown, intentJson?: unknown, migrationContext?: MigrationContext): QualityReport {
   const recommendations: string[] = [];
 
   // ─── Structural (40pts) ──────────────────────────────────────────────
@@ -352,6 +365,41 @@ export function scoreWorkflowQuality(workflowJson: unknown, intentJson?: unknown
       completenessScore = Math.max(0, completenessScore - penalty);
       completenessIssues.push(`${tautologyIfs.length} If action(s) have placeholder conditions (@true/@false) — original XLANG/s conditions must be translated to WDL`);
       recommendations.push('Translate XLANG/s conditions to WDL JSON predicate objects for all If actions');
+    }
+  }
+
+  // ─── Migration Context Penalties (applied to Completeness) ─────────────────
+  // These reflect work that still needs to be done OUTSIDE the generated JSON:
+  // unimplemented function stubs, gaps requiring redesign, and high-effort gaps.
+  // A structurally perfect workflow.json is NOT a complete migration if there are
+  // 8 unimplemented .cs stubs or a critical redesign gap.
+  if (migrationContext) {
+    // CRITICAL gaps: requires redesign — -8 each, max -16
+    if (migrationContext.criticalGapCount > 0) {
+      const penalty = Math.min(migrationContext.criticalGapCount * 8, 16);
+      completenessScore = Math.max(0, completenessScore - penalty);
+      completenessIssues.push(
+        `${migrationContext.criticalGapCount} CRITICAL gap(s) require redesign — significant manual work needed`
+      );
+      recommendations.push('Review CRITICAL gaps in the gap analysis — these require architectural redesign before deployment');
+    }
+    // HIGH gaps: significant workaround — -4 each, max -12
+    if (migrationContext.highGapCount > 0) {
+      const penalty = Math.min(migrationContext.highGapCount * 4, 12);
+      completenessScore = Math.max(0, completenessScore - penalty);
+      completenessIssues.push(
+        `${migrationContext.highGapCount} HIGH gap(s) require significant workarounds`
+      );
+      recommendations.push('Review HIGH severity gaps — each requires manual implementation or Azure Functions');
+    }
+    // Unimplemented stubs: -5 each, max -15
+    if (migrationContext.unimplementedStubCount > 0) {
+      const penalty = Math.min(migrationContext.unimplementedStubCount * 5, 15);
+      completenessScore = Math.max(0, completenessScore - penalty);
+      completenessIssues.push(
+        `${migrationContext.unimplementedStubCount} function stub(s) generated but not implemented — workflow will fail at runtime`
+      );
+      recommendations.push('Implement all generated .cs and .csx function stubs before deploying');
     }
   }
 

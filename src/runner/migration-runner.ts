@@ -28,7 +28,7 @@ import { generateMigrationResult }      from '../stage2-document/migration-spec-
 import { buildPackage }                 from '../stage3-build/package-builder.js';
 import { validateWorkflow }             from '../validation/workflow-validator.js';
 import { validateConnections }          from '../validation/connections-validator.js';
-import { scoreWorkflowQuality }         from '../validation/quality-scorer.js';
+import { scoreWorkflowQuality, type MigrationContext } from '../validation/quality-scorer.js';
 import { ClaudeClient }                 from './claude-client.js';
 import { generateMigrationReport }      from './report-generator.js';
 
@@ -170,10 +170,18 @@ export async function runMigration(options: MigrationRunOptions): Promise<Migrat
     workflow: wf.workflow as WorkflowJson,
   }));
 
+  // Build migration context for quality scorer — reflects work remaining OUTSIDE the JSON
+  const allGaps = analyzeGaps(app);
+  const migrationContext: MigrationContext = {
+    criticalGapCount: allGaps.filter(g => g.severity === 'critical').length,
+    highGapCount:     allGaps.filter(g => g.severity === 'high').length,
+    unimplementedStubCount: buildResult.summary.functionStubCount,
+  };
+
   for (const wf of workflowsToValidate) {
     const wfValidation = time('validate', () => validateWorkflow(wf.workflow));
     const connValidation = time('validate', () => validateConnections(connectionsJson, wf.workflow));
-    const quality = time('validate', () => scoreWorkflowQuality(wf.workflow, enrichedIntent));
+    const quality = time('validate', () => scoreWorkflowQuality(wf.workflow, enrichedIntent, migrationContext));
 
     for (const issue of wfValidation.issues) {
       if (issue.severity === 'error') errors.push(`[${wf.name}] ${issue.message}`);
@@ -205,7 +213,7 @@ export async function runMigration(options: MigrationRunOptions): Promise<Migrat
       for (let i = 0; i < workflowsToValidate.length; i++) {
         const wf = workflowsToValidate[i]!;
         const currentValidation = validateWorkflow(wf.workflow);
-        const currentQuality = scoreWorkflowQuality(wf.workflow, enrichedIntent);
+        const currentQuality = scoreWorkflowQuality(wf.workflow, enrichedIntent, migrationContext);
 
         if (currentValidation.errorCount === 0 && gradeValue(currentQuality.grade) >= gradeValue('B')) {
           continue; // This workflow is already good enough
@@ -224,7 +232,7 @@ export async function runMigration(options: MigrationRunOptions): Promise<Migrat
           try {
             const fixedWorkflow = restoreInvokeFunctionTypes(JSON.parse(reviewResult.fixedWorkflowJson) as WorkflowJson);
             const reValidated = validateWorkflow(fixedWorkflow);
-            const reScored = scoreWorkflowQuality(fixedWorkflow, enrichedIntent);
+            const reScored = scoreWorkflowQuality(fixedWorkflow, enrichedIntent, migrationContext);
 
             if (reScored.totalScore >= currentQuality.totalScore) {
               // Update workflow in place
@@ -272,14 +280,14 @@ export async function runMigration(options: MigrationRunOptions): Promise<Migrat
   progress('report', 'Generating migration report...');
 
   const firstWorkflow = buildResult.project.workflows[0]?.workflow as WorkflowJson | undefined;
-  const finalQualityReport = qualityReport ?? scoreWorkflowQuality(firstWorkflow ?? { definition: { $schema: '', contentVersion: '', triggers: {}, actions: {} }, kind: 'Stateful' }, enrichedIntent);
+  const finalQualityReport = qualityReport ?? scoreWorkflowQuality(firstWorkflow ?? { definition: { $schema: '', contentVersion: '', triggers: {}, actions: {} }, kind: 'Stateful' }, enrichedIntent, migrationContext);
 
   const migrationReport = time('report', () =>
     generateMigrationReport({
       app,
       buildResult,
       qualityReport: finalQualityReport,
-      gaps: analyzeGaps(app),
+      gaps: allGaps,
       patterns,
       outputDir,
       errors,
