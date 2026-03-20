@@ -160,7 +160,7 @@ export function buildPackage(
           },
         });
 
-        let workflowName = sanitizeWorkflowName(`Rcv_${rl.name}`);
+        let workflowName = sanitizeWorkflowName(`ReceivePort_${rl.name}`);
         if (usedWorkflowNames.has(workflowName)) {
           let c = 2;
           while (usedWorkflowNames.has(`${workflowName}_${c}`)) c++;
@@ -259,7 +259,8 @@ export function buildPackage(
       ? sanitizeWorkflowName(app.orchestrations[0].name)
       : undefined;
     const pipelineIntent = buildPipelineIntent(pipeline, firstOrchName);
-    let workflowName = sanitizeWorkflowName(`Pipeline_${pipeline.name}`);
+    const pipelinePrefix = pipeline.direction === 'send' ? 'SendPort' : 'ReceivePort';
+    let workflowName = sanitizeWorkflowName(`${pipelinePrefix}_${pipeline.name}`);
     if (usedWorkflowNames.has(workflowName)) {
       let c = 2;
       while (usedWorkflowNames.has(`${workflowName}_${c}`)) c++;
@@ -881,7 +882,7 @@ namespace ${namespace}
 
     /// <summary>
     /// Local code function stub generated from BizTalk migration.
-    /// Implement the body of Run() before deploying.
+    /// Implement the body of ${functionName}Run() before deploying.
     /// </summary>
     public class ${functionName}
     {
@@ -896,9 +897,9 @@ namespace ${namespace}
         /// Executes the logic app workflow action.
         /// </summary>
         [FunctionName("${functionName}")]
-        public Task<string> Run([WorkflowActionTrigger] string requestBody)
+        public Task<string> ${functionName}Run([WorkflowActionTrigger] string requestBody)
         {
-            this.logger.LogInformation("${functionName}: starting.");
+            this.logger.LogInformation("${functionName}Run: starting.");
 
             // Original BizTalk expression:
 ${exprComment}

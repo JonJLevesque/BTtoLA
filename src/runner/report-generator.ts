@@ -21,6 +21,7 @@ import type { QualityReport } from '../validation/quality-scorer.js';
 import type { MigrationGap } from '../types/migration.js';
 import type { IntegrationPattern } from '../shared/integration-intent.js';
 import type { MigrationStep } from './types.js';
+import { generateBizTalkDiagram, generateLogicAppsDiagram } from './diagram-generator.js';
 
 export interface ReportInput {
   app: BizTalkApplication;
@@ -202,6 +203,30 @@ export function generateMigrationReport(input: ReportInput): string {
   lines.push(`| Gaps — Critical / High / Medium | ${criticalGaps.length} / ${highGaps.length} / ${mediumGaps.length} |`);
   lines.push(`| Quality score | ${gradeIcon} ${qualityReport.totalScore}/100 Grade ${grade} |`);
   lines.push('');
+
+  // ── BizTalk Architecture Diagram ──────────────────────────────────────────
+
+  const biztalkDiagram = generateBizTalkDiagram(app);
+  if (biztalkDiagram) {
+    lines.push('## BizTalk Architecture');
+    lines.push('');
+    lines.push('<!-- HTML_BLOCK -->');
+    lines.push(biztalkDiagram);
+    lines.push('<!-- /HTML_BLOCK -->');
+    lines.push('');
+  }
+
+  // ── Logic Apps Architecture Diagram ───────────────────────────────────────
+
+  const logicAppsDiagram = generateLogicAppsDiagram(buildResult.project.workflows);
+  if (logicAppsDiagram) {
+    lines.push('## Logic Apps Architecture');
+    lines.push('');
+    lines.push('<!-- HTML_BLOCK -->');
+    lines.push(logicAppsDiagram);
+    lines.push('<!-- /HTML_BLOCK -->');
+    lines.push('');
+  }
 
   // ── Detected Enterprise Integration Patterns ──────────────────────────────
 

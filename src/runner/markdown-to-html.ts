@@ -46,6 +46,8 @@ const SECTION_ICONS: Record<string, string> = {
   'Infrastructure Requirements':  '🏗️',
   'Effort Summary':               '⏱️',
   'Parse Failures':               '❌',
+  'BizTalk Architecture':         '🗺️',
+  'Logic Apps Architecture':      '🏗️',
 };
 
 // Sections open by default
@@ -236,6 +238,19 @@ function convertMarkdown(md: string): string {
 
     // Skip first horizontal rule (hero divider)
     if (!skipHr && line === '---') { skipHr = true; i++; continue; }
+
+    // ── Raw HTML pass-through block (<!-- HTML_BLOCK --> ... <!-- /HTML_BLOCK -->)
+    if (line.startsWith('<!-- HTML_BLOCK -->')) {
+      const html: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i]!.startsWith('<!-- /HTML_BLOCK -->')) {
+        html.push(lines[i]!);
+        i++;
+      }
+      out.push(html.join('\n'));
+      i++; // skip closing marker
+      continue;
+    }
 
     // ── Fenced code block
     if (line.startsWith('```')) {
@@ -583,6 +598,15 @@ li{margin:5px 0;line-height:1.55}
 
 /* ── HR ── */
 hr{border:none;border-top:1px solid var(--border);margin:20px 0}
+
+/* ── Diagrams ── */
+.dia-wrap{margin:12px 0}
+.dia-svg-wrap{overflow-x:auto;padding:16px;background:#f8fafc;border:1px solid var(--border);border-radius:var(--radius)}
+.dia-node rect{transition:opacity .15s}
+.dia-node:hover rect{opacity:.85}
+.dia-details{margin-top:10px}
+.dia-details>summary{font-size:12px;color:var(--muted);cursor:pointer;padding:4px 0;user-select:none}
+.dia-details>summary:hover{color:var(--accent)}
 
 /* ── Footer ── */
 .footer{

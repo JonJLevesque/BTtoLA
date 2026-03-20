@@ -121,6 +121,7 @@ export function generateLocalSettings(
       FUNCTIONS_WORKER_RUNTIME:      'dotnet',
       APP_KIND:                      'workflowapp',
       AzureWebJobsFeatureFlags:      'EnableMultiLanguageWorker',
+      ProjectDirectoryPath:          '',
       ...Object.fromEntries(
         Object.entries(appSettings).map(([k]) => [k, `<set-in-azure-app-settings-or-keyvault>`])
       ),
