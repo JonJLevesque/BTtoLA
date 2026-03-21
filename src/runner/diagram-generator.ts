@@ -159,8 +159,15 @@ export function generateBizTalkDiagram(app: BizTalkApplication): string {
 
   const receiveLocations = app.bindingFiles.flatMap(b => b.receiveLocations);
   const sendPorts        = app.bindingFiles.flatMap(b => b.sendPorts);
-  const rcvPipelines     = [...new Set(receiveLocations.map(r => r.pipelineName).filter(Boolean))];
-  const sndPipelines     = [...new Set(sendPorts.map(s => s.pipelineName).filter(Boolean))];
+  // Receive/send pipeline names: prefer binding-derived names, fall back to parsed pipeline files
+  const rcvPipelinesFromBindings = [...new Set(receiveLocations.map(r => r.pipelineName).filter(Boolean))];
+  const sndPipelinesFromBindings = [...new Set(sendPorts.map(s => s.pipelineName).filter(Boolean))];
+  const rcvPipelines = rcvPipelinesFromBindings.length > 0
+    ? rcvPipelinesFromBindings
+    : app.pipelines.filter(p => p.direction === 'receive' && !p.isDefault).map(p => p.name);
+  const sndPipelines = sndPipelinesFromBindings.length > 0
+    ? sndPipelinesFromBindings
+    : app.pipelines.filter(p => p.direction === 'send' && !p.isDefault).map(p => p.name);
   // Deduplicate orchestrations by name (same class may appear in multiple .odx files)
   const orchSeen         = new Set<string>();
   const orchestrations   = app.orchestrations.filter(o => orchSeen.has(o.name) ? false : (orchSeen.add(o.name), true));
@@ -185,7 +192,7 @@ export function generateBizTalkDiagram(app: BizTalkApplication): string {
       const id = `rp_${i}`;
       rpIds.push(id);
       nodes.push({ id, label: p, sub: 'Receive Pipeline', kind: 'pipeline', col, row: i });
-      // Match receive locations to pipelines by name
+      // Match receive locations to pipelines by name (only when binding data is present)
       receiveLocations.forEach((rl, ri) => {
         if (rl.pipelineName === p) edges.push({ from: `rl_${ri}`, to: id });
       });
@@ -269,7 +276,7 @@ export function generateBizTalkDiagram(app: BizTalkApplication): string {
   receiveLocations.forEach(rl =>
     tableRows.push(`<tr><td>Receive Location</td><td><strong>${esc(rl.name)}</strong></td><td>${esc(rl.adapterType)}</td><td><code>${esc(rl.address)}</code></td></tr>`)
   );
-  app.orchestrations.forEach(orch =>
+  orchestrations.forEach(orch =>
     tableRows.push(`<tr><td>Orchestration</td><td><strong>${esc(orch.name)}</strong></td><td>${orch.shapes.length} shapes</td><td></td></tr>`)
   );
   app.maps.forEach(m =>
