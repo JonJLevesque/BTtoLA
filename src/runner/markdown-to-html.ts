@@ -607,8 +607,17 @@ hr{border:none;border-top:1px solid var(--border);margin:20px 0}
 .dia-details{margin-top:10px}
 .dia-details>summary{font-size:12px;color:var(--muted);cursor:pointer;padding:4px 0;user-select:none}
 .dia-details>summary:hover{color:var(--accent)}
-.dia-flow-section{margin-top:16px}
-.dia-flow-label{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:6px}
+.dia-item{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;overflow:hidden}
+.dia-item[open]{background:#fafbfc}
+.dia-item>summary{display:flex;align-items:center;gap:8px;padding:10px 14px;cursor:pointer;font-size:13px;list-style:none;user-select:none}
+.dia-item>summary::-webkit-details-marker{display:none}
+.dia-item>summary:hover{background:#f0f4f8}
+.dia-item-hd{display:contents}
+.dia-item-name{font-weight:600;color:var(--text)}
+.dia-item-badge{font-size:11px;padding:2px 8px;border-radius:100px;background:rgba(0,120,212,.08);color:#0078d4}
+.dia-item-badge.call{background:rgba(0,120,212,.12);color:#0056b3}
+.dia-item-badge.child{background:rgba(108,117,125,.1);color:#6c757d}
+.dia-item-body{padding:8px 14px 14px}
 
 /* ── Footer ── */
 .footer{

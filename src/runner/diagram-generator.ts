@@ -156,122 +156,32 @@ function heuristicEdges(fromIds: string[], toIds: string[], edges: DiagramEdge[]
 // ─── BizTalk Architecture Diagram ─────────────────────────────────────────────
 
 export function generateBizTalkDiagram(app: BizTalkApplication): string {
-  const nodes: DiagramNode[] = [];
-  const edges: DiagramEdge[] = [];
-
   const receiveLocations = app.bindingFiles.flatMap(b => b.receiveLocations);
   const sendPorts        = app.bindingFiles.flatMap(b => b.sendPorts);
-  // Receive/send pipeline names: prefer binding-derived names, fall back to parsed pipeline files
-  const rcvPipelinesFromBindings = [...new Set(receiveLocations.map(r => r.pipelineName).filter(Boolean))];
-  const sndPipelinesFromBindings = [...new Set(sendPorts.map(s => s.pipelineName).filter(Boolean))];
-  const rcvPipelines = rcvPipelinesFromBindings.length > 0
-    ? rcvPipelinesFromBindings
-    : app.pipelines.filter(p => p.direction === 'receive' && !p.isDefault).map(p => p.name);
-  const sndPipelines = sndPipelinesFromBindings.length > 0
-    ? sndPipelinesFromBindings
-    : app.pipelines.filter(p => p.direction === 'send' && !p.isDefault).map(p => p.name);
+
   // Deduplicate orchestrations by name (same class may appear in multiple .odx files)
-  const orchSeen         = new Set<string>();
-  const orchestrations   = app.orchestrations.filter(o => orchSeen.has(o.name) ? false : (orchSeen.add(o.name), true));
-  const maps             = app.maps;
+  const orchSeen       = new Set<string>();
+  const orchestrations = app.orchestrations.filter(o => orchSeen.has(o.name) ? false : (orchSeen.add(o.name), true));
 
-  // Column layout: ReceiveLocations | RcvPipelines | Orchestrations | Maps | SndPipelines | SendPorts
-  let col = 0;
+  if (orchestrations.length === 0 && receiveLocations.length === 0) return '';
 
-  // Col 0: Receive Locations
-  const rlIds: string[] = [];
-  receiveLocations.forEach((rl, i) => {
-    const id = `rl_${i}`;
-    rlIds.push(id);
-    nodes.push({ id, label: rl.name, sub: rl.adapterType, kind: 'receive', col, row: i });
-  });
-  if (receiveLocations.length > 0) col++;
-
-  // Col 1: Receive Pipelines
-  const rpIds: string[] = [];
-  if (rcvPipelines.length > 0) {
-    rcvPipelines.forEach((p, i) => {
-      const id = `rp_${i}`;
-      rpIds.push(id);
-      nodes.push({ id, label: p, sub: 'Receive Pipeline', kind: 'pipeline', col, row: i });
-      // Match receive locations to pipelines by name (only when binding data is present)
-      receiveLocations.forEach((rl, ri) => {
-        if (rl.pipelineName === p) edges.push({ from: `rl_${ri}`, to: id });
-      });
-    });
-    col++;
-  }
-
-  // Col 2: Orchestrations
-  const orchIds: string[] = [];
-  if (orchestrations.length > 0) {
-    orchestrations.forEach((orch, i) => {
-      const id = `orch_${i}`;
-      orchIds.push(id);
-      nodes.push({ id, label: orch.name, sub: 'Orchestration', kind: 'orchestration', col, row: i });
-    });
-    // Connect previous column → orchestrations (heuristic, not cartesian)
-    heuristicEdges(rpIds.length > 0 ? rpIds : rlIds, orchIds, edges);
-    col++;
-  }
-
-  // Col 3: Maps
-  const mapIds: string[] = [];
-  if (maps.length > 0) {
-    maps.forEach((m, i) => {
-      const id = `map_${i}`;
-      mapIds.push(id);
-      const srcShort = m.sourceSchemaRef.split('.').pop() ?? m.sourceSchemaRef;
-      const dstShort = m.destinationSchemaRef.split('.').pop() ?? m.destinationSchemaRef;
-      nodes.push({ id, label: m.name, sub: `${srcShort} → ${dstShort}`, kind: 'map', col, row: i });
-    });
-    // Connect orchestrations → maps (heuristic), or rcvPipelines if no orchs
-    const prevIds = orchIds.length > 0 ? orchIds : (rpIds.length > 0 ? rpIds : rlIds);
-    heuristicEdges(prevIds, mapIds, edges);
-    col++;
-  }
-
-  // Col 4: Send Pipelines
-  const spIds: string[] = [];
-  if (sndPipelines.length > 0) {
-    sndPipelines.forEach((p, i) => {
-      const id = `sp_${i}`;
-      spIds.push(id);
-      nodes.push({ id, label: p, sub: 'Send Pipeline', kind: 'pipeline', col, row: i });
-    });
-    // Connect previous column → send pipelines (heuristic)
-    const prevIds = mapIds.length > 0 ? mapIds
-      : orchIds.length > 0 ? orchIds
-      : rpIds.length > 0 ? rpIds
-      : rlIds;
-    heuristicEdges(prevIds, spIds, edges);
-    col++;
-  }
-
-  // Col 5: Send Ports
-  const sptIds: string[] = [];
-  sendPorts.forEach((sp, i) => {
-    const id = `spt_${i}`;
-    sptIds.push(id);
-    nodes.push({ id, label: sp.name, sub: sp.adapterType, kind: 'sendport', col, row: i });
-    if (sndPipelines.length > 0) {
-      // Match send ports to pipelines by name
-      sndPipelines.forEach((p, si) => {
-        if (sp.pipelineName === p) edges.push({ from: `sp_${si}`, to: id });
-      });
-    }
-  });
-  if (sptIds.length > 0 && spIds.length === 0) {
-    // No send pipelines — connect from previous column (heuristic)
-    const prevIds = mapIds.length > 0 ? mapIds
-      : orchIds.length > 0 ? orchIds
-      : rlIds;
-    heuristicEdges(prevIds, sptIds, edges);
-  }
-
-  if (nodes.length === 0) return '';
-
-  const svg = svgWrapper(nodes, edges, 'biztalk');
+  // Per-orchestration collapsible accordions
+  const orchItems = orchestrations
+    .filter(o => o.shapes.length > 0)
+    .map(o => {
+      const flowNodes = buildOrchestrationFlow(o.shapes, 0);
+      const pfx       = `bztflow-${o.name.replace(/\W+/g, '')}`;
+      const bodyHtml  = flowNodes.length > 0
+        ? `<div class="dia-svg-wrap">${generateFlowSvg(flowNodes, pfx)}</div>`
+        : `<p style="color:var(--muted);font-size:13px">No flow nodes generated.</p>`;
+      return `<details class="dia-item">
+  <summary class="dia-item-hd">
+    <span class="dia-item-name">${esc(o.name)}</span>
+    <span class="dia-item-badge">${o.shapes.length} shapes</span>
+  </summary>
+  <div class="dia-item-body">${bodyHtml}</div>
+</details>`;
+    }).join('');
 
   // Details table
   const tableRows: string[] = [];
@@ -291,23 +201,9 @@ export function generateBizTalkDiagram(app: BizTalkApplication): string {
     tableRows.push(`<tr><td>Send Port</td><td><strong>${esc(sp.name)}</strong></td><td>${esc(sp.adapterType)}</td><td><code>${esc(sp.address)}</code></td></tr>`)
   );
 
-  // Per-orchestration flow diagrams
-  const orchFlowSections = orchestrations
-    .filter(o => o.shapes.length > 0)
-    .map(o => {
-      const flowNodes = buildOrchestrationFlow(o.shapes, 0);
-      if (flowNodes.length === 0) return '';
-      const pfx = `bztflow-${o.name.replace(/\W+/g, '')}`;
-      const flowSvg = generateFlowSvg(flowNodes, pfx);
-      return `<div class="dia-flow-section">
-  <div class="dia-flow-label">Orchestration: ${esc(o.name)} (${o.shapes.length} shapes)</div>
-  <div class="dia-svg-wrap">${flowSvg}</div>
-</div>`;
-    }).join('');
-
   return `
 <div class="dia-wrap">
-  <div class="dia-svg-wrap">${svg}</div>
+  ${orchItems}
   <details class="dia-details">
     <summary>View artifact details</summary>
     <div class="table-wrap"><table>
@@ -315,7 +211,6 @@ export function generateBizTalkDiagram(app: BizTalkApplication): string {
       <tbody>${tableRows.join('')}</tbody>
     </table></div>
   </details>
-  ${orchFlowSections}
 </div>`;
 }
 
@@ -326,107 +221,81 @@ export function generateLogicAppsDiagram(
 ): string {
   if (workflows.length === 0) return '';
 
-  const nodes: DiagramNode[] = [];
-  const edges: DiagramEdge[] = [];
-
-  // Build workflow name → index map for child call resolution
-  const wfNameToIndex = new Map(workflows.map((wf, i) => [wf.name, i]));
-
-  // Collect connectors and child calls per workflow
-  const allConnectors = new Map<string, string>(); // connectionName → serviceProviderId
-  const wfConnectors  = new Map<number, string[]>(); // wf index → connectionNames used
-  const wfChildCalls  = new Map<number, string[]>(); // wf index → child workflow names
-
-  workflows.forEach((wf, i) => {
-    const actions    = wf.workflow.definition.actions ?? {};
-    const triggers   = wf.workflow.definition.triggers ?? {};
-    const connUsed: string[] = [];
-    const childCalls: string[] = [];
-
+  // Recursively collect child workflow calls from an actions map
+  function collectChildCalls(actions: Record<string, WdlAction>, out: string[]): void {
     for (const action of Object.values(actions)) {
-      if (action.type === 'ServiceProvider') {
-        const sp = (action as ServiceProviderAction).inputs.serviceProviderConfiguration;
-        connUsed.push(sp.connectionName);
-        if (!allConnectors.has(sp.connectionName)) {
-          allConnectors.set(sp.connectionName, sp.serviceProviderId);
-        }
-      } else if (action.type === 'Workflow') {
-        const wa = action as WorkflowAction;
-        childCalls.push(wa.inputs.host.workflow.id);
+      if (action.type === 'Workflow') {
+        out.push((action as WorkflowAction).inputs.host.workflow.id);
+      } else if (action.type === 'If') {
+        collectChildCalls(action.actions, out);
+        if (action.else) collectChildCalls(action.else.actions, out);
+      } else if (action.type === 'Scope' || action.type === 'Until' || action.type === 'Foreach') {
+        collectChildCalls(action.actions, out);
+      } else if (action.type === 'Switch') {
+        for (const body of Object.values(action.cases)) collectChildCalls(body.actions, out);
+        if (action.default) collectChildCalls(action.default.actions, out);
       }
     }
-    // Also check trigger connectors
-    for (const trigger of Object.values(triggers)) {
-      if (trigger.type === 'ServiceProvider') {
-        const sp = trigger.inputs.serviceProviderConfiguration;
-        connUsed.push(sp.connectionName);
-        if (!allConnectors.has(sp.connectionName)) {
-          allConnectors.set(sp.connectionName, sp.serviceProviderId);
-        }
-      }
-    }
-
-    wfConnectors.set(i, [...new Set(connUsed)]);
-    wfChildCalls.set(i, childCalls);
-  });
-
-  const connList = [...allConnectors.entries()]; // [connectionName, serviceProviderId][]
-
-  // Col 0: Triggers, Col 1: Workflows
-  workflows.forEach((wf, i) => {
-    const def            = wf.workflow.definition;
-    const triggerEntries = Object.entries(def.triggers ?? {});
-    const trigName       = triggerEntries[0]?.[0] ?? 'Trigger';
-    const trigObj        = triggerEntries[0]?.[1];
-
-    let trigSub = 'Trigger';
-    if (trigObj) {
-      if (trigObj.type === 'Request') {
-        trigSub = 'HTTP Trigger';
-      } else if (trigObj.type === 'Recurrence') {
-        trigSub = 'Schedule';
-      } else if (trigObj.type === 'ServiceProvider') {
-        trigSub = trigObj.inputs.serviceProviderConfiguration.connectionName;
-      }
-    }
-
-    const actCount = Object.keys(def.actions ?? {}).length;
-    const wfSub    = actCount > 0 ? `${actCount} action${actCount !== 1 ? 's' : ''}` : 'no actions';
-
-    nodes.push({ id: `trig_${i}`, label: trigName.replace(/_/g, ' '), sub: trigSub, kind: 'trigger', col: 0, row: i });
-    nodes.push({ id: `wf_${i}`,   label: wf.name, sub: wfSub, kind: 'workflow', col: 1, row: i });
-    edges.push({ from: `trig_${i}`, to: `wf_${i}` });
-  });
-
-  // Col 2: Connectors (if any)
-  if (connList.length > 0) {
-    connList.forEach(([connName, serviceProviderId], j) => {
-      const providerShort = serviceProviderId.split('/').pop() ?? serviceProviderId;
-      nodes.push({ id: `conn_${j}`, label: connName, sub: providerShort, kind: 'connector', col: 2, row: j });
-    });
-    // Edges: workflow → connectors it uses
-    workflows.forEach((_, i) => {
-      const used = wfConnectors.get(i) ?? [];
-      used.forEach(connName => {
-        const j = connList.findIndex(([cn]) => cn === connName);
-        if (j >= 0) edges.push({ from: `wf_${i}`, to: `conn_${j}` });
-      });
-    });
   }
 
-  // Dashed edges for child workflow calls (within workflow column)
-  workflows.forEach((_, i) => {
-    const calls = wfChildCalls.get(i) ?? [];
-    calls.forEach(calledName => {
-      const j = wfNameToIndex.get(calledName);
-      if (j !== undefined && j !== i) {
-        edges.push({ from: `wf_${i}`, to: `wf_${j}`, dashed: true });
-      }
-    });
+  // Collect child calls per workflow
+  const wfChildCalls = new Map<number, string[]>(); // wf index → child workflow names called
+  workflows.forEach((wf, i) => {
+    const childCalls: string[] = [];
+    collectChildCalls(wf.workflow.definition.actions ?? {}, childCalls);
+    wfChildCalls.set(i, [...new Set(childCalls)]);
   });
 
-  const svg = svgWrapper(nodes, edges, 'logicapps');
+  // Reverse map: calledName → callerNames[]
+  const calledBy = new Map<string, string[]>();
+  workflows.forEach((wf, i) => {
+    for (const calledName of wfChildCalls.get(i) ?? []) {
+      const arr = calledBy.get(calledName) ?? [];
+      arr.push(wf.name);
+      calledBy.set(calledName, arr);
+    }
+  });
 
+  // Per-workflow collapsible accordions
+  const wfItems = workflows.map((wf, i) => {
+    const def      = wf.workflow.definition;
+    const triggers = def.triggers ?? {};
+    const actions  = def.actions ?? {};
+
+    // Trigger type badge
+    const trigObj = Object.values(triggers)[0];
+    let trigBadge = 'Trigger';
+    if (trigObj) {
+      if (trigObj.type === 'Request')             trigBadge = 'HTTP Trigger';
+      else if (trigObj.type === 'Recurrence')     trigBadge = 'Schedule';
+      else if (trigObj.type === 'ServiceProvider') trigBadge = trigObj.inputs.serviceProviderConfiguration.connectionName;
+    }
+
+    // Relationship badges
+    const callBadges     = (wfChildCalls.get(i) ?? []).map(n => `<span class="dia-item-badge call">→ calls ${esc(n)}</span>`).join('');
+    const calledByBadges = (calledBy.get(wf.name) ?? []).map(n => `<span class="dia-item-badge child">← called by ${esc(n)}</span>`).join('');
+
+    // Flow diagram
+    let bodyHtml = '<p style="color:var(--muted);font-size:13px">No actions.</p>';
+    if (Object.keys(actions).length > 0) {
+      const flowNodes = buildWorkflowFlow(actions, triggers, 0);
+      if (flowNodes.length > 0) {
+        const pfx = `laflow-${wf.name.replace(/\W+/g, '')}`;
+        bodyHtml = `<div class="dia-svg-wrap">${generateFlowSvg(flowNodes, pfx)}</div>`;
+      }
+    }
+
+    return `<details class="dia-item">
+  <summary class="dia-item-hd">
+    <span class="dia-item-name">${esc(wf.name)}</span>
+    <span class="dia-item-badge">${esc(trigBadge)}</span>
+    ${callBadges}${calledByBadges}
+  </summary>
+  <div class="dia-item-body">${bodyHtml}</div>
+</details>`;
+  }).join('');
+
+  // Details table
   const tableRows = workflows.map(wf => {
     const def      = wf.workflow.definition;
     const triggers = Object.keys(def.triggers ?? {});
@@ -434,26 +303,9 @@ export function generateLogicAppsDiagram(
     return `<tr><td><strong>${esc(wf.name)}</strong></td><td>${esc(triggers.join(', ') || '—')}</td><td>${actions.length}</td><td>${esc(wf.workflow.kind ?? 'Stateful')}</td></tr>`;
   });
 
-  // Per-workflow flow diagrams
-  const wfFlowSections = workflows.map(wf => {
-    const def = wf.workflow.definition;
-    const actions = def.actions ?? {};
-    if (Object.keys(actions).length === 0) return '';
-    const triggers = def.triggers ?? {};
-    const flowNodes = buildWorkflowFlow(actions, triggers, 0);
-    if (flowNodes.length === 0) return '';
-    const pfx = `laflow-${wf.name.replace(/\W+/g, '')}`;
-    const flowSvg = generateFlowSvg(flowNodes, pfx);
-    const actCount = Object.keys(actions).length;
-    return `<div class="dia-flow-section">
-  <div class="dia-flow-label">Workflow: ${esc(wf.name)} (${actCount} action${actCount !== 1 ? 's' : ''})</div>
-  <div class="dia-svg-wrap">${flowSvg}</div>
-</div>`;
-  }).join('');
-
   return `
 <div class="dia-wrap">
-  <div class="dia-svg-wrap">${svg}</div>
+  ${wfItems}
   <details class="dia-details">
     <summary>View workflow details</summary>
     <div class="table-wrap"><table>
@@ -461,7 +313,6 @@ export function generateLogicAppsDiagram(
       <tbody>${tableRows.join('')}</tbody>
     </table></div>
   </details>
-  ${wfFlowSections}
 </div>`;
 }
 
