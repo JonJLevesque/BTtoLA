@@ -47,7 +47,7 @@
  */
 
 import { mkdirSync, writeFileSync, existsSync, copyFileSync } from 'fs';
-import { join, basename, resolve } from 'path';
+import { join, basename } from 'path';
 import type { BuildResult } from '../stage3-build/package-builder.js';
 import { migrationReportToHtml } from './markdown-to-html.js';
 
@@ -93,12 +93,10 @@ export function writeOutput(options: WriteOptions): void {
   // ── Root Logic Apps project files ──────────────────────────────────────────
   writeJson(join(logicAppDir, 'connections.json'), buildResult.project.connections);
   writeJson(join(logicAppDir, 'host.json'), buildResult.project.host);
-  // Patch ProjectDirectoryPath to the absolute path of the Logic Apps project folder
-  // so that the VS Code designer can discover local code functions in lib/custom/.
-  const localSettings = JSON.parse(JSON.stringify(buildResult.localSettings)) as Record<string, unknown>;
-  const localSettingsVals = localSettings['Values'] as Record<string, string> | undefined;
-  if (localSettingsVals) localSettingsVals['ProjectDirectoryPath'] = resolve(logicAppDir);
-  writeJson(join(logicAppDir, 'local.settings.json'), localSettings);
+  // ProjectDirectoryPath is left as '' — the VS Code Azure Logic Apps extension sets it
+  // dynamically at debug time from the workspace folder. Hardcoding the migration
+  // machine's path would break the workspace on every other machine.
+  writeJson(join(logicAppDir, 'local.settings.json'), buildResult.localSettings);
   writeJson(join(logicAppDir, 'parameters.json'), {});
 
   // ── Artifacts — always created (Maps, Rules, Schemas always present) ────────
@@ -130,11 +128,7 @@ export function writeOutput(options: WriteOptions): void {
   const wdDir = join(logicAppDir, 'workflow-designtime');
   ensureDir(wdDir);
   writeJson(join(wdDir, 'host.json'), WORKFLOW_DESIGNTIME_HOST);
-  // Patch ProjectDirectoryPath to the Logic Apps project root for the designtime settings too
-  const wdLocalSettings = JSON.parse(JSON.stringify(WORKFLOW_DESIGNTIME_LOCAL_SETTINGS)) as Record<string, unknown>;
-  const wdVals = wdLocalSettings['Values'] as Record<string, string> | undefined;
-  if (wdVals) wdVals['ProjectDirectoryPath'] = resolve(logicAppDir);
-  writeJson(join(wdDir, 'local.settings.json'), wdLocalSettings);
+  writeJson(join(wdDir, 'local.settings.json'), WORKFLOW_DESIGNTIME_LOCAL_SETTINGS);
 
   // ── lib/custom structure (inside Logic Apps project) ───────────────────────
   const net472Dir = join(logicAppDir, 'lib', 'custom', 'net472');
