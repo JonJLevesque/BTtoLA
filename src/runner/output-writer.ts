@@ -446,7 +446,16 @@ const FUNCTIONS_VSCODE_TASKS = {
 function generateCsproj(appName: string): string {
   // Match SampleLogicApps/Empty/empty-workspace/Empty_Function/Empty_Function.csproj exactly.
   // LogicAppFolder is just the sibling folder name; all target paths use ..\$(LogicAppFolder).
-  return `<Project Sdk="Microsoft.NET.Sdk">
+  // Explicit SDK imports (Sdk.props / Sdk.targets) instead of <Project Sdk="..."> shorthand.
+  // This allows us to override ParameterizedFunctionJsonGenerator AFTER NuGet package targets
+  // are imported, which is required to work around a bug in Microsoft.Azure.Workflows.WebJobs.Sdk
+  // v1.1.0 where that post-build task selects the net472 build tool based on project TFM rather
+  // than the MSBuild host runtime — causing it to fail when building with `dotnet build` (.NET 8
+  // MSBuild). The no-op override below suppresses the failing task; functions work correctly at
+  // runtime. Full designer metadata requires building from Visual Studio with .NET Framework MSBuild.
+  return `<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <TargetFramework>net472</TargetFramework>
@@ -455,7 +464,7 @@ function generateCsproj(appName: string): string {
     <PlatformTarget>x64</PlatformTarget>
     <LogicAppFolder>${appName}</LogicAppFolder>
     <CopyToOutputDirectory>Always</CopyToOutputDirectory>
- </PropertyGroup>
+  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Azure.WebJobs.Core" Version="3.0.39" />
@@ -465,37 +474,44 @@ function generateCsproj(appName: string): string {
     <PackageReference Include="Microsoft.Extensions.Logging" Version="2.1.1" />
   </ItemGroup>
 
-<Target Name="Task" AfterTargets="Compile">
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="bin\\$(Configuration)\\net472\\" />
+  </ItemGroup>
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+
+  <!-- No-op override: suppresses the broken ParameterizedFunctionJsonGenerator post-build task
+       from Microsoft.Azure.Workflows.WebJobs.Sdk v1.1.0 when building with dotnet build.
+       Must appear AFTER Sdk.targets import to take precedence. -->
+  <Target Name="ParameterizedFunctionJsonGenerator" />
+
+  <Target Name="Task" AfterTargets="Compile">
     <ItemGroup>
-        <DirsToClean2 Include="..\\$(LogicAppFolder)\\lib\\custom" />
-      </ItemGroup>
-      <RemoveDir Directories="@(DirsToClean2)" />
- </Target>
+      <DirsToClean2 Include="..\\$(LogicAppFolder)\\lib\\custom" />
+    </ItemGroup>
+    <RemoveDir Directories="@(DirsToClean2)" />
+  </Target>
 
   <Target Name="CopyExtensionFiles" AfterTargets="ParameterizedFunctionJsonGenerator">
     <ItemGroup>
-        <CopyFiles Include="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\**\\*.*" CopyToOutputDirectory="PreserveNewest" Exclude="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\*.*" />
+      <CopyFiles Include="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\**\\*.*" CopyToOutputDirectory="PreserveNewest" Exclude="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\*.*" />
       <CopyFiles2 Include="$(MSBuildProjectDirectory)\\bin\\$(Configuration)\\net472\\*.*" />
     </ItemGroup>
     <Copy SourceFiles="@(CopyFiles)" DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\%(RecursiveDir)" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(CopyFiles2)" DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\net472\\" SkipUnchangedFiles="true" />
     <ItemGroup>
-        <MoveFiles Include="..\\$(LogicAppFolder)\\lib\\custom\\bin\\*.*" />
+      <MoveFiles Include="..\\$(LogicAppFolder)\\lib\\custom\\bin\\*.*" />
     </ItemGroup>
-
-   <Move SourceFiles="@(MoveFiles)" DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\net472" />
+    <Move SourceFiles="@(MoveFiles)" DestinationFolder="..\\$(LogicAppFolder)\\lib\\custom\\net472" />
     <ItemGroup>
-       <DirsToClean Include="..\\$(LogicAppFolder)\\lib\\custom\\bin" />
-     </ItemGroup>
-       <RemoveDir Directories="@(DirsToClean)" />
+      <DirsToClean Include="..\\$(LogicAppFolder)\\lib\\custom\\bin" />
+    </ItemGroup>
+    <RemoveDir Directories="@(DirsToClean)" />
   </Target>
 
-  <ItemGroup>
-      <Reference Include="Microsoft.CSharp" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="bin\\$(Configuration)\\net472\\" />
-  </ItemGroup>
 </Project>
 `;
 }
