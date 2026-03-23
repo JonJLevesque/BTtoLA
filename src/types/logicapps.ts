@@ -362,7 +362,7 @@ export interface ManagedApiConnection {
 }
 
 export interface ConnectionsJson {
-  serviceProviderConnections: Record<string, ServiceProviderConnection>;
+  serviceProviderConnections?: Record<string, ServiceProviderConnection>;
   managedApiConnections: Record<string, ManagedApiConnection>;
 }
 

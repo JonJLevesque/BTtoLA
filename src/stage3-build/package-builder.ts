@@ -488,7 +488,7 @@ export function buildPackageFromIntent(
     workflowCount:     1,
     mapCount:          0,
     functionStubCount: 0,
-    connectionCount:   Object.keys(connections.serviceProviderConnections).length +
+    connectionCount:   Object.keys(connections.serviceProviderConnections ?? {}).length +
                        Object.keys(connections.managedApiConnections).length,
     testCaseCount:     totalTestCases,
     warnings:          0,

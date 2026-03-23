@@ -385,7 +385,7 @@ const VSCODE_TASKS = {
       command: 'powershell',
       args: [
         '-Command',
-        "$file = '${workspaceFolder}\\workflow-designtime\\local.settings.json'; $json = Get-Content $file -Raw | ConvertFrom-Json; $json.Values.ProjectDirectoryPath = '${workspaceFolder}'; $json | ConvertTo-Json -Depth 10 | Set-Content $file -Encoding UTF8",
+        "$p = '${workspaceFolder}'; foreach ($f in @('local.settings.json', 'workflow-designtime\\local.settings.json')) { $path = \"$p\\$f\"; if (Test-Path $path) { $json = Get-Content $path -Raw | ConvertFrom-Json; $json.Values.ProjectDirectoryPath = $p; $json | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding UTF8 } }",
       ],
       problemMatcher: [],
     },
@@ -613,7 +613,6 @@ __blobstorage__
 __queuestorage__
 global.json
 local.settings.json
-*_Functions
 test
 workflow-designtime/
 `;

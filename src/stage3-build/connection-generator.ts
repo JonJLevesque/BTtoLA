@@ -419,8 +419,8 @@ function buildConnections(connectorNames: Set<string>): ConnectionGeneratorResul
 
   return {
     connections: {
-      serviceProviderConnections: svcProviderConns,
-      managedApiConnections:      managedApiConns,
+      ...(Object.keys(svcProviderConns).length > 0 ? { serviceProviderConnections: svcProviderConns } : {}),
+      managedApiConnections: managedApiConns,
     },
     appSettings,
   };
