@@ -369,7 +369,7 @@ function generateLaunchJson(appName: string, hasCustomCode: boolean): Record<str
           : `Run/Debug ${appName}`,
         type: 'logicapp',
         request: 'launch',
-        ...(hasCustomCode ? {} : { isCodeless: true }),
+        isCodeless: true,
         ...(hasCustomCode ? { funcRuntime: 'coreclr', customCodeRuntime: 'clr' } : {}),
       },
     ],
