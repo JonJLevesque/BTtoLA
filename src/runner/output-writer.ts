@@ -147,6 +147,7 @@ export function writeOutput(options: WriteOptions): void {
   });
   writeJson(join(vscodeDir, 'settings.json'), generateVscodeSettings());
   writeJson(join(vscodeDir, 'tasks.json'), VSCODE_TASKS);
+  writeFileSync(join(vscodeDir, 'fix-project-path.ps1'), FIX_PROJECT_PATH_PS1, 'utf-8');
 
   // ── .funcignore / .gitignore (inside Logic Apps project) ───────────────────
   writeFileSync(join(logicAppDir, '.funcignore'), FUNCIGNORE_CONTENT, 'utf-8');
@@ -384,10 +385,12 @@ const VSCODE_TASKS = {
       type: 'shell',
       command: 'powershell',
       args: [
-        '-Command',
-        "$p = '${workspaceFolder}'; foreach ($f in @('local.settings.json', 'workflow-designtime\\local.settings.json')) { $path = \"$p\\$f\"; if (Test-Path $path) { $json = Get-Content $path -Raw | ConvertFrom-Json; $json.Values.ProjectDirectoryPath = $p; $json | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding UTF8 } }",
+        '-ExecutionPolicy', 'Bypass',
+        '-File', '${workspaceFolder}\\.vscode\\fix-project-path.ps1',
+        '-ProjectDir', '${workspaceFolder}',
       ],
       problemMatcher: [],
+      runOptions: { runOn: 'folderOpen' },
     },
     {
       label: 'generateDebugSymbols',
@@ -603,6 +606,19 @@ function randomGuid(): string {
 }
 
 // ─── Static templates ─────────────────────────────────────────────────────────
+
+const FIX_PROJECT_PATH_PS1 = `\
+param([string]$ProjectDir)
+
+foreach ($f in @('local.settings.json', 'workflow-designtime\\local.settings.json')) {
+    $path = Join-Path $ProjectDir $f
+    if (Test-Path $path) {
+        $json = Get-Content $path -Raw | ConvertFrom-Json
+        $json.Values.ProjectDirectoryPath = $ProjectDir
+        $json | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding UTF8
+    }
+}
+`;
 
 const FUNCIGNORE_CONTENT = `\
 .debug
